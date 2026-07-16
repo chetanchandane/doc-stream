@@ -19,6 +19,7 @@ depends_on: str | Sequence[str] | None = None
 _JOB_STATUS = sa.Enum(
     "pending",
     "extracting",
+    "extracted",
     "enriching",
     "completed",
     "failed",

@@ -24,6 +24,12 @@ ps: ## Show infra container status
 topics: ## Create the DocStream Kafka topics
 	uv run python scripts/create_topics.py
 
+gateway: ## Run the API Gateway (with in-process outbox relay)
+	uv run uvicorn docstream.gateway.app:app --reload
+
+worker: ## Run the extraction worker
+	uv run python -m docstream.extraction.worker
+
 test: ## Run the test suite
 	uv run pytest
 

@@ -37,10 +37,11 @@ def _uuid() -> str:
 
 
 class JobStatus(str, enum.Enum):
-    PENDING = "pending"
-    EXTRACTING = "extracting"
-    ENRICHING = "enriching"
-    COMPLETED = "completed"
+    PENDING = "pending"  # ingested, waiting for extraction
+    EXTRACTING = "extracting"  # extraction worker is pulling text
+    EXTRACTED = "extracted"  # text pulled, waiting for enrichment
+    ENRICHING = "enriching"  # enrichment worker is running
+    COMPLETED = "completed"  # enriched and indexed
     FAILED = "failed"
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from docstream.common.config import get_settings
 
@@ -28,8 +29,14 @@ class LocalStorage:
         return dest.resolve().as_uri()
 
     def read(self, uri: str) -> bytes:
-        path = Path.from_uri(uri) if hasattr(Path, "from_uri") else Path(uri.removeprefix("file://"))
-        return path.read_bytes()
+        return self._path_for(uri).read_bytes()
+
+    @staticmethod
+    def _path_for(uri: str) -> Path:
+        """Resolve a file:// URI (or bare path) to a local Path."""
+        if uri.startswith("file://"):
+            return Path(unquote(urlparse(uri).path))
+        return Path(uri)
 
 
 @lru_cache

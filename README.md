@@ -6,10 +6,10 @@ enrichment**, stores results and vectors in **Postgres + Qdrant**, and runs on
 **Kubernetes** with retries, dead-letter handling, autoscaling, and full
 observability.
 
-> Status: **Week 1 — skeleton, event backbone, and the write path.** The repo,
-> event/topic contract, local infra, API Gateway, Postgres job store, and the
-> transactional-outbox relay are in. The extraction and enrichment workers land
-> in Week 2.
+> Status: **Week 1 complete.** Submit a document and it flows end to end: API
+> Gateway → transactional outbox → relay → `documents.ingested` → extraction
+> worker → `documents.extracted`. The AI enrichment worker plus idempotency,
+> retry, and DLQ land in Week 2.
 
 ## Architecture
 
@@ -113,6 +113,20 @@ The relay drains the outbox to Kafka; watch `documents.ingested` in kafka-ui at
 http://localhost:8080. To run the relay as its own process instead, set
 `DOCSTREAM_RELAY__RUN_IN_PROCESS=false` and run `python -m docstream.gateway.relay`.
 
+### Run the extraction worker (the other end of the bus)
+
+In a second terminal:
+
+```bash
+make worker          # uv run python -m docstream.extraction.worker
+```
+
+Now the full Week 1 flow runs: the worker consumes `documents.ingested`, pulls
+text from the stored bytes, updates the job (`pending → extracting → extracted`),
+and emits `documents.extracted` — itself written through the outbox, so every
+service produces events the same reliable way. Watch both topics in kafka-ui and
+poll `GET /jobs/{job_id}` to see the status advance.
+
 ## Project layout
 
 ```
@@ -134,16 +148,19 @@ doc-stream/
 │   │   ├── models.py          # Job + OutboxEvent
 │   │   └── outbox.py
 │   ├── storage/               # raw-bytes storage (local FS for now)
-│   └── gateway/               # FastAPI app, ingestion service, outbox relay
-│       ├── app.py
-│       ├── service.py         # transactional-outbox write path
-│       └── relay.py           # drains outbox -> Kafka
-└── tests/                     # event, outbox, and gateway API tests
+│   ├── gateway/               # FastAPI app, ingestion service, outbox relay
+│   │   ├── app.py
+│   │   ├── service.py         # transactional-outbox write path
+│   │   └── relay.py           # drains outbox -> Kafka
+│   └── extraction/            # extraction worker
+│       ├── text.py            # pure text extraction (txt + pdf)
+│       └── worker.py          # consume ingested -> emit extracted (via outbox)
+└── tests/                     # event, outbox, gateway, and extraction tests
 ```
 
 ## Roadmap
 
-- **Week 1** — skeleton, event backbone, API Gateway + transactional outbox (done).
-- **Week 2** — extraction + AI enrichment workers, idempotency, retry + DLQ.
+- **Week 1** — skeleton, event backbone, API Gateway + outbox, extraction worker (done).
+- **Week 2** — AI enrichment worker (Qdrant + LLM), idempotency, retry + DLQ.
 - **Week 3** — Kubernetes + Helm, GitHub Actions, Prometheus + Grafana.
 - **Week 4** — OpenTelemetry tracing, k6 load test, polish.
