@@ -32,6 +32,23 @@ class QdrantSettings(BaseSettings):
     url: str = "http://localhost:6333"
 
 
+class StorageSettings(BaseSettings):
+    """Where the API Gateway persists raw uploaded bytes (local FS for now)."""
+
+    dir: str = ".data/uploads"
+
+
+class RelaySettings(BaseSettings):
+    """Outbox relay: polls the outbox table and publishes to Kafka."""
+
+    poll_interval_seconds: float = 1.0
+    batch_size: int = 100
+    max_attempts: int = 10
+    # Run the relay as a background task inside the gateway process. Convenient
+    # for local dev; in production you'd run it as its own deployment.
+    run_in_process: bool = True
+
+
 class Settings(BaseSettings):
     """Root settings object for every DocStream service."""
 
@@ -50,6 +67,8 @@ class Settings(BaseSettings):
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
+    storage: StorageSettings = Field(default_factory=StorageSettings)
+    relay: RelaySettings = Field(default_factory=RelaySettings)
 
 
 @lru_cache

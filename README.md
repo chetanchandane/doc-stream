@@ -6,9 +6,10 @@ enrichment**, stores results and vectors in **Postgres + Qdrant**, and runs on
 **Kubernetes** with retries, dead-letter handling, autoscaling, and full
 observability.
 
-> Status: **Week 1 — skeleton and the event backbone.** This commit sets up the
-> repo, the event/topic contract, and the local infrastructure. The API
-> Gateway, workers, and outbox relay land next.
+> Status: **Week 1 — skeleton, event backbone, and the write path.** The repo,
+> event/topic contract, local infra, API Gateway, Postgres job store, and the
+> transactional-outbox relay are in. The extraction and enrichment workers land
+> in Week 2.
 
 ## Architecture
 
@@ -93,6 +94,25 @@ open http://localhost:8080     # kafka-ui
 `cp .env.example .env` if you want to override any defaults. Run `make help` to
 see every target.
 
+### Run the API Gateway
+
+```bash
+# Apply DB migrations, then start the gateway (it runs the outbox relay in-process)
+uv run alembic upgrade head
+uv run uvicorn docstream.gateway.app:app --reload
+
+# Submit a document (writes a job + outbox row in one transaction)
+curl -F "file=@/path/to/lease.pdf" http://localhost:8000/documents
+# -> {"job_id": "...", "document_id": "...", "status": "pending"}
+
+# Check its status
+curl http://localhost:8000/jobs/<job_id>
+```
+
+The relay drains the outbox to Kafka; watch `documents.ingested` in kafka-ui at
+http://localhost:8080. To run the relay as its own process instead, set
+`DOCSTREAM_RELAY__RUN_IN_PROCESS=false` and run `python -m docstream.gateway.relay`.
+
 ## Project layout
 
 ```
@@ -100,20 +120,30 @@ doc-stream/
 ├── docker-compose.yml         # local infra: Kafka, Postgres, Redis, Qdrant, UI
 ├── Makefile                   # install / up / topics / test / lint
 ├── pyproject.toml             # uv-managed deps (src layout)
+├── alembic/                   # async migrations (0001 creates jobs + outbox)
 ├── scripts/
 │   └── create_topics.py       # idempotent topic bootstrap
 ├── src/docstream/
-│   └── common/                # the shared event contract
-│       ├── config.py
-│       ├── events.py
-│       └── topics.py
-└── tests/
-    └── test_events.py
+│   ├── common/                # the shared event contract
+│   │   ├── config.py
+│   │   ├── events.py
+│   │   ├── messaging.py       # aiokafka producer wrapper
+│   │   └── topics.py
+│   ├── db/                    # async SQLAlchemy: session, models, outbox helpers
+│   │   ├── base.py
+│   │   ├── models.py          # Job + OutboxEvent
+│   │   └── outbox.py
+│   ├── storage/               # raw-bytes storage (local FS for now)
+│   └── gateway/               # FastAPI app, ingestion service, outbox relay
+│       ├── app.py
+│       ├── service.py         # transactional-outbox write path
+│       └── relay.py           # drains outbox -> Kafka
+└── tests/                     # event, outbox, and gateway API tests
 ```
 
 ## Roadmap
 
-- **Week 1** — skeleton + event backbone (this). API Gateway + outbox next.
-- **Week 2** — AI enrichment worker, idempotency, retry + DLQ.
+- **Week 1** — skeleton, event backbone, API Gateway + transactional outbox (done).
+- **Week 2** — extraction + AI enrichment workers, idempotency, retry + DLQ.
 - **Week 3** — Kubernetes + Helm, GitHub Actions, Prometheus + Grafana.
 - **Week 4** — OpenTelemetry tracing, k6 load test, polish.
