@@ -1,0 +1,38 @@
+.DEFAULT_GOAL := help
+
+.PHONY: help install up down logs topics ps test lint fmt clean
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+
+install: ## Sync Python deps with uv (incl. dev extras)
+	uv sync --extra dev
+
+up: ## Start local infra (Kafka, Postgres, Redis, Qdrant, kafka-ui)
+	docker compose up -d
+
+down: ## Stop local infra
+	docker compose down
+
+logs: ## Tail infra logs
+	docker compose logs -f
+
+ps: ## Show infra container status
+	docker compose ps
+
+topics: ## Create the DocStream Kafka topics
+	uv run python scripts/create_topics.py
+
+test: ## Run the test suite
+	uv run pytest
+
+lint: ## Lint with ruff
+	uv run ruff check .
+
+fmt: ## Format with ruff
+	uv run ruff format .
+
+clean: ## Remove local data volumes and caches
+	docker compose down -v
+	rm -rf .pytest_cache .ruff_cache .mypy_cache
