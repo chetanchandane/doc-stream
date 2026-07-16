@@ -6,8 +6,8 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Sync Python deps with uv (incl. dev extras)
-	uv sync --extra dev
+install: ## Sync Python deps with uv (incl. dev group)
+	uv sync
 
 up: ## Start local infra (Kafka, Postgres, Redis, Qdrant, kafka-ui)
 	docker compose up -d

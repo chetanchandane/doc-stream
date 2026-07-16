@@ -79,7 +79,7 @@ Prerequisites: [Docker](https://docs.docker.com/get-docker/) and
 
 ```bash
 # 1. Install Python deps
-make install            # uv sync --extra dev
+make install            # uv sync (installs the dev group too)
 
 # 2. Start local infra (Kafka, Postgres, Redis, Qdrant, kafka-ui)
 make up

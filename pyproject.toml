@@ -25,7 +25,9 @@ dependencies = [
     "qdrant-client>=1.9",
 ]
 
-[project.optional-dependencies]
+# Dev tooling lives in a dependency-group so `uv sync` / `uv run` install it
+# automatically (no `--extra dev` needed).
+[dependency-groups]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
