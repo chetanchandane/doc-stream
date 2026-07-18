@@ -105,17 +105,21 @@ async def search(
     limit: int = 5,
 ) -> list[dict]:
     """
-    Dense similarity search for the Query API (Phase 5). Returns a list of
+    Dense similarity search for the Query API. Returns a list of
     {document_id, chunk_index, text, score} dicts sorted by score descending.
+
+    Uses ``query_points`` — the modern unified query API. The older
+    ``client.search(query_vector=...)`` was deprecated and REMOVED in current
+    qdrant-client versions, so calling it raises AttributeError.
     """
-    hits = await client.search(
+    response = await client.query_points(
         collection_name=collection,
-        query_vector=query_vector,
+        query=query_vector,
         limit=limit,
         with_payload=True,
     )
     results: list[dict] = []
-    for hit in hits:
+    for hit in response.points:
         payload = hit.payload or {}
         results.append(
             {

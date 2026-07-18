@@ -113,6 +113,34 @@ class OutboxEvent(Base):
     )
 
 
+class DocumentView(Base):
+    """CQRS read model: one row per fully enriched document.
+
+    Built asynchronously by the projector from ``documents.enriched`` events —
+    never written by the command side. The query service reads ONLY this table
+    (plus Qdrant) so read traffic never touches the ``jobs`` write model and the
+    two sides can evolve and scale independently.
+
+    Denormalized on purpose: everything the read API needs lives here, so a
+    query is a single-row lookup with no joins back to the write side.
+    """
+
+    __tablename__ = "document_view"
+
+    document_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(36), index=True)
+
+    filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    classification: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # When the projector last applied an event for this document.
+    indexed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class ProcessedEvent(Base):
     """Dedup ledger for idempotent consumption.
 

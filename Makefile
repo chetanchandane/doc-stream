@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install up down logs topics ps test lint fmt clean gateway worker enrichment
+.PHONY: help install up down logs topics ps test lint fmt clean gateway worker enrichment projector query
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -32,6 +32,12 @@ worker: ## Run the extraction worker
 
 enrichment: ## Run the enrichment worker
 	uv run python -m docstream.enrichment.worker
+
+projector: ## Run the read-model projector (CQRS read side)
+	uv run python -m docstream.projection.worker
+
+query: ## Run the Query API (read side) on port 8001
+	uv run uvicorn docstream.query.app:app --reload --port 8001
 
 test: ## Run the test suite
 	uv run pytest

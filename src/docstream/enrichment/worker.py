@@ -98,6 +98,7 @@ async def handle_extracted(
         DocumentEnriched(
             job_id=job.id,
             document_id=payload.document_id,
+            filename=job.filename,  # lets the read-side projector avoid the write model
             classification=result.classification,
             summary=result.summary,
             chunk_count=len(chunks),

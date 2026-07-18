@@ -78,6 +78,10 @@ class DocumentEnriched(BaseModel):
     event_type: Literal[EventType.DOCUMENT_ENRICHED] = EventType.DOCUMENT_ENRICHED
     job_id: str
     document_id: str
+    # Carried so the read-side projector can build its view from the event alone,
+    # without querying the write model. Optional for backward compatibility with
+    # events published before this field existed.
+    filename: str | None = None
     classification: str | None = None
     summary: str | None = None
     chunk_count: int = 0
