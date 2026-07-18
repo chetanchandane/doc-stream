@@ -26,8 +26,10 @@ from docstream.common.events import (
     EventEnvelope,
     make_event,
 )
+from docstream.common.retry import process_with_retry
 from docstream.common.topics import DOCUMENTS_INGESTED, GROUP_EXTRACTION
 from docstream.db.base import get_sessionmaker
+from docstream.db.idempotency import mark_processed
 from docstream.db.models import Job, JobStatus
 from docstream.db.outbox import enqueue_event
 from docstream.extraction.text import extract_text
@@ -46,6 +48,11 @@ async def handle_ingested(
     """Process one ingested event. The caller owns the transaction/commit."""
     assert isinstance(envelope.payload, DocumentIngested)
     payload = envelope.payload
+
+    # Idempotency guard: skip if this consumer group already processed the event.
+    if not await mark_processed(session, envelope.event_id, GROUP_EXTRACTION):
+        log.info("duplicate event %s; already processed, skipping", envelope.event_id)
+        return
 
     job = await _load_job(session, payload.document_id)
     if job is None:
@@ -110,11 +117,14 @@ async def _mark_failed(document_id: str, error: str) -> None:
 
 async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     """Consume documents.ingested until cancelled."""
-    from docstream.common.messaging import KafkaConsumer
+    from docstream.common.messaging import KafkaConsumer, KafkaProducer
 
     settings = get_settings()
     storage = get_storage()
     sm = get_sessionmaker()
+
+    producer = KafkaProducer(settings.kafka)
+    await producer.start()
 
     consumer = KafkaConsumer(
         settings.kafka,
@@ -128,18 +138,29 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             if stop_event is not None and stop_event.is_set():
                 break
             envelope = EventEnvelope.from_bytes(record.value)
-            try:
+
+            async def _work(envelope: EventEnvelope = envelope) -> None:
                 async with sm() as session:
                     async with session.begin():
                         await handle_ingested(session, storage, envelope)
-            except Exception as exc:  # noqa: BLE001
-                log.exception("extraction failed for event %s", envelope.event_id)
+
+            async def _on_dlq(exc: BaseException, envelope: EventEnvelope = envelope) -> None:
                 await _mark_failed(envelope.document_id, repr(exc))
-            # Commit the offset either way: success advances, failure is recorded
-            # as FAILED (proper retry + DLQ arrives in Week 2).
+
+            # Retry on the same topic; dead-letter + mark failed once exhausted.
+            await process_with_retry(
+                _work,
+                envelope=envelope,
+                producer=producer,
+                source_topic=DOCUMENTS_INGESTED,
+                max_attempts=settings.consumer.max_attempts,
+                backoff_seconds=settings.consumer.backoff_seconds,
+                on_dlq=_on_dlq,
+            )
             await consumer.commit()
     finally:
         await consumer.stop()
+        await producer.stop()
 
 
 def main() -> None:

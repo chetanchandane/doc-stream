@@ -29,8 +29,10 @@ from docstream.common.events import (
     EventEnvelope,
     make_event,
 )
+from docstream.common.retry import process_with_retry
 from docstream.common.topics import DOCUMENTS_EXTRACTED, GROUP_ENRICHMENT
 from docstream.db.base import get_sessionmaker
+from docstream.db.idempotency import mark_processed
 from docstream.db.models import Job, JobStatus
 from docstream.db.outbox import enqueue_event
 from docstream.enrichment.chunking import chunk_text
@@ -65,6 +67,13 @@ async def handle_extracted(
     """
     assert isinstance(envelope.payload, DocumentExtracted)
     payload = envelope.payload
+
+    # Idempotency guard: skip if this consumer group already processed the event.
+    # Deterministic point ids keep the Qdrant upsert safe too, but this stops a
+    # redelivered event from re-running the LLM and re-emitting documents.enriched.
+    if not await mark_processed(session, envelope.event_id, GROUP_ENRICHMENT):
+        log.info("duplicate event %s; already processed, skipping", envelope.event_id)
+        return
 
     job = await _load_job(session, payload.document_id)
     if job is None:
@@ -171,7 +180,7 @@ def _build_dependencies(settings):
 
 async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     """Consume documents.extracted until cancelled."""
-    from docstream.common.messaging import KafkaConsumer
+    from docstream.common.messaging import KafkaConsumer, KafkaProducer
     from docstream.enrichment.qdrant_store import ensure_collection
 
     settings = get_settings()
@@ -181,6 +190,9 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     embedder, llm, qdrant = _build_dependencies(settings)
     # Idempotent: safe to call on every start.
     await ensure_collection(qdrant, settings.qdrant.collection, settings.qdrant.vector_size)
+
+    producer = KafkaProducer(settings.kafka)
+    await producer.start()
 
     consumer = KafkaConsumer(
         settings.kafka,
@@ -194,7 +206,8 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             if stop_event is not None and stop_event.is_set():
                 break
             envelope = EventEnvelope.from_bytes(record.value)
-            try:
+
+            async def _work(envelope: EventEnvelope = envelope) -> None:
                 async with sm() as session:
                     async with session.begin():
                         await handle_extracted(
@@ -208,14 +221,24 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                             chunk_size=settings.embedding.chunk_size,
                             chunk_overlap=settings.embedding.chunk_overlap,
                         )
-            except Exception as exc:  # noqa: BLE001
-                log.exception("enrichment failed for event %s", envelope.event_id)
+
+            async def _on_dlq(exc: BaseException, envelope: EventEnvelope = envelope) -> None:
                 await _mark_failed(envelope.document_id, repr(exc))
-            # Commit the offset either way: success advances, failure is recorded
-            # as FAILED (proper retry + DLQ arrives in Phase 4).
+
+            # Retry on the same topic; dead-letter + mark failed once exhausted.
+            await process_with_retry(
+                _work,
+                envelope=envelope,
+                producer=producer,
+                source_topic=DOCUMENTS_EXTRACTED,
+                max_attempts=settings.consumer.max_attempts,
+                backoff_seconds=settings.consumer.backoff_seconds,
+                on_dlq=_on_dlq,
+            )
             await consumer.commit()
     finally:
         await consumer.stop()
+        await producer.stop()
 
 
 def main() -> None:

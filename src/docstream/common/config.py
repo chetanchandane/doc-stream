@@ -68,6 +68,18 @@ class StorageSettings(BaseSettings):
     dir: str = ".data/uploads"
 
 
+class ConsumerSettings(BaseSettings):
+    """Retry + dead-letter policy shared by the workers.
+
+    A handler failure is retried by re-publishing the event to its own topic with
+    an incremented ``attempt``; after ``max_attempts`` total tries the event is
+    routed to ``<topic>.DLQ`` and the job is marked failed.
+    """
+
+    max_attempts: int = 5  # total processing attempts before the DLQ
+    backoff_seconds: float = 1.0  # linear backoff base between retries
+
+
 class RelaySettings(BaseSettings):
     """Outbox relay: polls the outbox table and publishes to Kafka."""
 
@@ -101,6 +113,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     relay: RelaySettings = Field(default_factory=RelaySettings)
+    consumer: ConsumerSettings = Field(default_factory=ConsumerSettings)
 
 
 @lru_cache

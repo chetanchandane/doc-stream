@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -109,4 +110,29 @@ class OutboxEvent(Base):
     __table_args__ = (
         # The relay's hot path: find the oldest unpublished rows fast.
         Index("ix_outbox_unpublished", "published_at", "created_at"),
+    )
+
+
+class ProcessedEvent(Base):
+    """Dedup ledger for idempotent consumption.
+
+    Each consumer group records the events it has fully processed. A worker
+    inserts ``(event_id, consumer_group)`` in the SAME transaction as its work,
+    so a redelivered event hits the unique constraint and is skipped instead of
+    being processed twice. The row commits (or rolls back) atomically with the
+    handler's DB writes and outbox emit.
+    """
+
+    __tablename__ = "processed_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(String(36), index=True)
+    consumer_group: Mapped[str] = mapped_column(String(255))
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+
+    __table_args__ = (
+        # One event may be processed once per consumer group (fan-out safe).
+        UniqueConstraint("event_id", "consumer_group", name="uq_processed_event_group"),
     )
