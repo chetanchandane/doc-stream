@@ -25,6 +25,10 @@ dependencies = [
     "qdrant-client>=1.9",
     # PDF text extraction
     "pypdf>=4.2",
+    # Enrichment (Week 2): chunking + embedding + LLM
+    "langchain-text-splitters>=0.2",
+    "openai>=1.30",
+    "anthropic>=0.30",
 ]
 
 # Dev tooling lives in a dependency-group so `uv sync` / `uv run` install it

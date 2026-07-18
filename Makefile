@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install up down logs topics ps test lint fmt clean
+.PHONY: help install up down logs topics ps test lint fmt clean gateway worker enrichment
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -29,6 +29,9 @@ gateway: ## Run the API Gateway (with in-process outbox relay)
 
 worker: ## Run the extraction worker
 	uv run python -m docstream.extraction.worker
+
+enrichment: ## Run the enrichment worker
+	uv run python -m docstream.enrichment.worker
 
 test: ## Run the test suite
 	uv run pytest

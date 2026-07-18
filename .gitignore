@@ -32,3 +32,5 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+docs

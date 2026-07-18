@@ -23,6 +23,10 @@ class JobResponse(BaseModel):
     size_bytes: int
     status: JobStatus
     error: str | None
+    # Enrichment results (null until the job reaches 'completed').
+    classification: str | None = None
+    summary: str | None = None
+    chunk_count: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -36,6 +40,9 @@ class JobResponse(BaseModel):
             size_bytes=job.size_bytes,
             status=job.status,
             error=job.error,
+            classification=job.classification,
+            summary=job.summary,
+            chunk_count=job.chunk_count,
             created_at=job.created_at,
             updated_at=job.updated_at,
         )

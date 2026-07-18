@@ -65,6 +65,11 @@ class Job(Base):
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Enrichment results (populated by the enrichment worker in Phase 2).
+    classification: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

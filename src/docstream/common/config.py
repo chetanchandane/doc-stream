@@ -30,6 +30,36 @@ class RedisSettings(BaseSettings):
 
 class QdrantSettings(BaseSettings):
     url: str = "http://localhost:6333"
+    # Cloud clusters need a key; local docker instance leaves it unset.
+    api_key: str | None = None
+    # Collection the enrichment worker upserts chunks into.
+    collection: str = "documents"
+    # Must equal the embedding model's dimension (see EmbeddingSettings.dim).
+    vector_size: int = 1536
+
+
+class EmbeddingSettings(BaseSettings):
+    """Dense embeddings for the enrichment worker (Phase 2)."""
+
+    provider: str = "openai"
+    model: str = "text-embedding-3-small"
+    dim: int = 1536  # text-embedding-3-small -> 1536; keep in sync with qdrant.vector_size
+    api_key: str = ""
+    base_url: str | None = None  # set for Azure/OpenAI-compatible/local gateways
+    # Chunking is prep for embedding, so its knobs live here.
+    # NOTE: RecursiveCharacterTextSplitter counts CHARACTERS, not tokens.
+    chunk_size: int = 512
+    chunk_overlap: int = 64
+
+
+class LLMSettings(BaseSettings):
+    """LLM used for enrichment (classification + summary + field extraction)."""
+
+    provider: str = "anthropic"
+    model: str = "claude-sonnet-4-6"
+    api_key: str = ""
+    base_url: str | None = None
+    max_tokens: int = 1024
 
 
 class StorageSettings(BaseSettings):
@@ -67,6 +97,8 @@ class Settings(BaseSettings):
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     relay: RelaySettings = Field(default_factory=RelaySettings)
 
