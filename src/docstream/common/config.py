@@ -68,6 +68,25 @@ class StorageSettings(BaseSettings):
     dir: str = ".data/uploads"
 
 
+class QuerySettings(BaseSettings):
+    """Read-side retrieval tuning.
+
+    Vector search always returns the top-K nearest neighbours, however poor the
+    match — so with a small corpus a specific question happily returns unrelated
+    chunks. These two cutoffs drop weak hits so the cited sources reflect what
+    actually informed the answer.
+    """
+
+    # Absolute floor: cosine scores below this are never relevant. Set 0 to disable.
+    min_score: float = 0.2
+    # Relative floor: drop hits scoring below this fraction of the BEST hit.
+    # Adapts to queries where everything scores high or everything scores low.
+    # Set 0 to disable.
+    relative_cutoff: float = 0.5
+    # Default number of chunks fed to the LLM.
+    default_limit: int = 5
+
+
 class ConsumerSettings(BaseSettings):
     """Retry + dead-letter policy shared by the workers.
 
@@ -114,6 +133,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     relay: RelaySettings = Field(default_factory=RelaySettings)
     consumer: ConsumerSettings = Field(default_factory=ConsumerSettings)
+    query: QuerySettings = Field(default_factory=QuerySettings)
 
 
 @lru_cache

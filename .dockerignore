@@ -1,0 +1,41 @@
+# Keep the build context small and the image clean.
+# NOTE: README.md, pyproject.toml, uv.lock, src/, alembic/, and scripts/ are
+# required by the build — do not exclude them.
+
+# Local virtualenv (the image builds its own)
+.venv/
+venv/
+
+# VCS + editor
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+*.swp
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Tests aren't needed at runtime
+tests/
+
+# Local runtime data (uploads, extracted text) — mounted as a volume instead
+.data/
+
+# Local env files: secrets come from the environment, never baked into an image
+.env
+.env.*
+!.env.example
+
+# Docs and sample documents
+docs/
+*.pdf
+
+# Compose files (not needed inside the image)
+docker-compose*.yml

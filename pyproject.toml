@@ -11,6 +11,8 @@ dependencies = [
     # API + config
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    # Required by FastAPI for multipart/form-data (the POST /documents upload).
+    "python-multipart>=0.0.9",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     # Kafka (async, pairs with FastAPI)

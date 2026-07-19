@@ -69,6 +69,8 @@ async def search_chunks(
     question: str,
     limit: int = 5,
     document_id: str | None = None,
+    min_score: float = 0.0,
+    relative_cutoff: float = 0.0,
 ) -> list[dict]:
     """Semantic search: retrieved excerpts, no generation."""
     hits = await retrieve(
@@ -78,6 +80,8 @@ async def search_chunks(
         question=question,
         limit=limit,
         document_id=document_id,
+        min_score=min_score,
+        relative_cutoff=relative_cutoff,
     )
     return await _attach_filenames(session, hits)
 
@@ -92,11 +96,14 @@ async def answer_question(
     question: str,
     limit: int = 5,
     document_id: str | None = None,
+    min_score: float = 0.0,
+    relative_cutoff: float = 0.0,
 ) -> tuple[str, list[dict]]:
     """Full RAG: retrieve, then generate a grounded answer.
 
     Returns ``(answer, sources)``. Sources are returned alongside the answer so
-    the caller can verify the grounding rather than trusting it.
+    the caller can verify the grounding rather than trusting it — which only
+    holds if the sources are actually relevant, hence the relevance cutoffs.
     """
     contexts = await search_chunks(
         session,
@@ -106,6 +113,8 @@ async def answer_question(
         question=question,
         limit=limit,
         document_id=document_id,
+        min_score=min_score,
+        relative_cutoff=relative_cutoff,
     )
     answer = await generator.generate(question, contexts)
     log.info("answered question with %d context chunk(s)", len(contexts))

@@ -1,0 +1,148 @@
+# DocStream application services — an OVERLAY on docker-compose.yml (infra).
+#
+# Kept separate so the two workflows stay independent:
+#
+#   docker compose up -d                                   # infra only, run
+#                                                          # services on the host
+#                                                          # with make gateway etc.
+#
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.app.yml up -d         # everything in Docker
+#
+# (Or just: make up-all / make down-all)
+#
+# Ordering is enforced with depends_on conditions: migrations and topic creation
+# must finish before any service starts, so a cold `up` works on a clean volume.
+
+name: docstream
+
+# Every service gets the same config; only the entrypoint differs. Note the
+# INTERNAL hostnames — containers reach Kafka on kafka:19092, NOT localhost:9092
+# (that advertised listener is for host clients).
+x-app-env: &app-env
+  DOCSTREAM_KAFKA__BOOTSTRAP_SERVERS: kafka:19092
+  DOCSTREAM_POSTGRES__DSN: postgresql+asyncpg://docstream:docstream@postgres:5432/docstream
+  DOCSTREAM_REDIS__URL: redis://redis:6379/0
+  DOCSTREAM_QDRANT__URL: http://qdrant:6333
+  DOCSTREAM_QDRANT__COLLECTION: ${DOCSTREAM_QDRANT__COLLECTION:-documents}
+  DOCSTREAM_STORAGE__DIR: /app/.data/uploads
+  DOCSTREAM_LOG_LEVEL: ${DOCSTREAM_LOG_LEVEL:-INFO}
+  # Secrets are passed through from your shell/.env — never baked into an image.
+  DOCSTREAM_EMBEDDING__API_KEY: ${DOCSTREAM_EMBEDDING__API_KEY:-}
+  DOCSTREAM_LLM__API_KEY: ${DOCSTREAM_LLM__API_KEY:-}
+
+x-infra-ready: &infra-ready
+  kafka:
+    condition: service_healthy
+  postgres:
+    condition: service_healthy
+
+services:
+  # --- one-shot bootstrap ---------------------------------------------------
+  migrate:
+    build:
+      context: .
+      target: migrate
+    image: docstream/migrate:dev
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  topics:
+    build:
+      context: .
+      target: topics
+    image: docstream/topics:dev
+    environment: *app-env
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
+  # --- command side (write path) -------------------------------------------
+  gateway:
+    build:
+      context: .
+      target: gateway
+    image: docstream/gateway:dev
+    environment: *app-env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Shared with extraction/enrichment: the gateway writes uploaded bytes
+      # here and the workers read them. Without this they'd each get their own
+      # empty layer and extraction would fail to find the file.
+      - uploads:/app/.data
+    depends_on:
+      <<: *infra-ready
+      migrate:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  extraction:
+    build:
+      context: .
+      target: extraction
+    image: docstream/extraction:dev
+    environment: *app-env
+    volumes:
+      - uploads:/app/.data
+    depends_on:
+      <<: *infra-ready
+      migrate:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  enrichment:
+    build:
+      context: .
+      target: enrichment
+    image: docstream/enrichment:dev
+    environment: *app-env
+    volumes:
+      - uploads:/app/.data
+    depends_on:
+      <<: *infra-ready
+      migrate:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # --- query side (read path) ----------------------------------------------
+  projector:
+    build:
+      context: .
+      target: projector
+    image: docstream/projector:dev
+    environment: *app-env
+    depends_on:
+      <<: *infra-ready
+      migrate:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  query:
+    build:
+      context: .
+      target: query
+    image: docstream/query:dev
+    environment: *app-env
+    ports:
+      - "8001:8001"
+    depends_on:
+      <<: *infra-ready
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  uploads:

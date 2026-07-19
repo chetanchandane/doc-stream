@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install up down logs topics ps test test-integration test-all lint fmt clean gateway worker enrichment projector query
+.PHONY: help install up down build up-all down-all logs logs-app topics ps ps-all test test-integration test-all lint fmt clean gateway worker enrichment projector query
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -9,11 +9,28 @@ help: ## Show this help
 install: ## Sync Python deps with uv (incl. dev group)
 	uv sync
 
+COMPOSE_ALL := docker compose -f docker-compose.yml -f docker-compose.app.yml
+
 up: ## Start local infra (Kafka, Postgres, Redis, Qdrant, kafka-ui)
 	docker compose up -d
 
 down: ## Stop local infra
 	docker compose down
+
+build: ## Build all five service images
+	$(COMPOSE_ALL) build
+
+up-all: ## Start infra AND all app services in containers
+	$(COMPOSE_ALL) up -d
+
+down-all: ## Stop everything (infra + app services)
+	$(COMPOSE_ALL) down
+
+logs-app: ## Tail logs from the app services
+	$(COMPOSE_ALL) logs -f gateway extraction enrichment projector query
+
+ps-all: ## Status of every container
+	$(COMPOSE_ALL) ps
 
 logs: ## Tail infra logs
 	docker compose logs -f

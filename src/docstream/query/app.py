@@ -118,14 +118,17 @@ async def search(
     session: AsyncSession = Depends(get_session),
 ) -> SearchResponse:
     embedder, _generator, qdrant = _dependencies()
+    settings = get_settings()
     hits = await service.search_chunks(
         session,
         embedder=embedder,
         qdrant=qdrant,
-        collection=get_settings().qdrant.collection,
+        collection=settings.qdrant.collection,
         question=q,
         limit=limit,
         document_id=document_id,
+        min_score=settings.query.min_score,
+        relative_cutoff=settings.query.relative_cutoff,
     )
     return SearchResponse(query=q, count=len(hits), results=[Chunk(**h) for h in hits])
 
@@ -136,15 +139,18 @@ async def ask(
     session: AsyncSession = Depends(get_session),
 ) -> AskResponse:
     embedder, generator, qdrant = _dependencies()
+    settings = get_settings()
     answer, sources = await service.answer_question(
         session,
         embedder=embedder,
         qdrant=qdrant,
         generator=generator,
-        collection=get_settings().qdrant.collection,
+        collection=settings.qdrant.collection,
         question=request.question,
         limit=request.limit,
         document_id=request.document_id,
+        min_score=settings.query.min_score,
+        relative_cutoff=settings.query.relative_cutoff,
     )
     return AskResponse(
         question=request.question,

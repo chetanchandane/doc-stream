@@ -11,6 +11,7 @@ from docstream.projection.worker import handle_enriched
 from docstream.query import service
 from docstream.query.generation import FakeGenerator
 from docstream.query.prompts import build_user_message
+from docstream.query.retrieval import filter_by_relevance
 
 
 class _ScoredPoint:
@@ -200,6 +201,102 @@ async def test_answer_with_no_hits_says_so(sessionmaker):
             generator=FakeGenerator(),
             collection="documents",
             question="anything?",
+        )
+    assert sources == []
+    assert "do not contain enough information" in answer
+
+
+# --------------------------------------------------------------------------- #
+# Relevance filtering
+# --------------------------------------------------------------------------- #
+# Scores below are the REAL ones observed asking "what is the security deposit?"
+# against a corpus holding one lease and one resume: the lease chunk scored 0.42,
+# the four resume chunks 0.077 / 0.068 / 0.066 / 0.054. Before filtering, all
+# five were returned as "sources" for the answer.
+_OBSERVED = [
+    {"document_id": "lease", "chunk_index": 0, "text": "deposit $2000", "score": 0.4199896},
+    {"document_id": "resume", "chunk_index": 5, "text": "Vodafone", "score": 0.07742128},
+    {"document_id": "resume", "chunk_index": 6, "text": "CI/CD", "score": 0.06768199},
+    {"document_id": "resume", "chunk_index": 0, "text": "Chetan", "score": 0.06571977},
+    {"document_id": "resume", "chunk_index": 8, "text": "TriageAI", "score": 0.054184772},
+]
+
+
+def test_filter_drops_irrelevant_sources_from_real_scores():
+    kept = filter_by_relevance(_OBSERVED, min_score=0.2, relative_cutoff=0.5)
+    assert len(kept) == 1
+    assert kept[0]["document_id"] == "lease"
+
+
+def test_filter_absolute_floor_only():
+    kept = filter_by_relevance(_OBSERVED, min_score=0.06, relative_cutoff=0.0)
+    # 0.054 drops; the rest survive the floor.
+    assert [round(h["score"], 3) for h in kept] == [0.420, 0.077, 0.068, 0.066]
+
+
+def test_filter_relative_cutoff_adapts_to_the_top_hit():
+    """When everything scores low but comparably, relative keeps the cluster."""
+    hits = [
+        {"score": 0.34, "document_id": "a"},
+        {"score": 0.30, "document_id": "b"},
+        {"score": 0.05, "document_id": "c"},
+    ]
+    kept = filter_by_relevance(hits, min_score=0.0, relative_cutoff=0.5)
+    assert [h["document_id"] for h in kept] == ["a", "b"]
+
+
+def test_filter_returns_empty_when_nothing_is_relevant():
+    weak = [{"score": 0.05, "document_id": "x"}, {"score": 0.04, "document_id": "y"}]
+    assert filter_by_relevance(weak, min_score=0.2, relative_cutoff=0.5) == []
+
+
+def test_filter_disabled_by_zeros():
+    assert filter_by_relevance(_OBSERVED, min_score=0.0, relative_cutoff=0.0) == _OBSERVED
+
+
+def test_filter_handles_empty_input():
+    assert filter_by_relevance([], min_score=0.2, relative_cutoff=0.5) == []
+
+
+async def test_search_applies_relevance_cutoff(sessionmaker):
+    """End-to-end through the service: noise is dropped before it reaches sources."""
+    await _project(sessionmaker, "lease")
+    qdrant = StubQdrant(
+        [
+            {"document_id": "lease", "chunk_index": 0, "text": "deposit $2000", "score": 0.42},
+            {"document_id": "lease", "chunk_index": 1, "text": "unrelated", "score": 0.06},
+        ]
+    )
+    async with sessionmaker() as session:
+        hits = await service.search_chunks(
+            session,
+            embedder=FakeEmbedder(dim=8),
+            qdrant=qdrant,
+            collection="documents",
+            question="security deposit",
+            limit=5,
+            min_score=0.2,
+            relative_cutoff=0.5,
+        )
+    assert len(hits) == 1
+    assert hits[0]["chunk_index"] == 0
+
+
+async def test_answer_says_it_does_not_know_when_all_hits_are_weak(sessionmaker):
+    """Filtering to zero is better than citing noise: the model can decline."""
+    qdrant = StubQdrant(
+        [{"document_id": "resume", "chunk_index": 0, "text": "unrelated", "score": 0.05}]
+    )
+    async with sessionmaker() as session:
+        answer, sources = await service.answer_question(
+            session,
+            embedder=FakeEmbedder(dim=8),
+            qdrant=qdrant,
+            generator=FakeGenerator(),
+            collection="documents",
+            question="what is the security deposit?",
+            min_score=0.2,
+            relative_cutoff=0.5,
         )
     assert sources == []
     assert "do not contain enough information" in answer
