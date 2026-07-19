@@ -1,0 +1,61 @@
+{{- $fullname := include "docstream.fullname" . -}}
+{{- $cfg := .Values.services.gateway -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-gateway
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ $cfg.replicas }}
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "gateway") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "docstream.waitForInfra" . | nindent 6 }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}/gateway:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $cfg.port }}
+          env:
+            {{- include "docstream.env" . | nindent 12 }}
+            # The gateway runs the outbox relay in-process. Set false and deploy
+            # the relay separately if you want to scale them independently.
+            - name: DOCSTREAM_RELAY__RUN_IN_PROCESS
+              value: "true"
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml $cfg.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-gateway
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $cfg.port }}
+      targetPort: http
+  selector:
+    {{- include "docstream.selectorLabels" (dict "ctx" . "component" "gateway") | nindent 4 }}

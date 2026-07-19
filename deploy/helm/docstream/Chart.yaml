@@ -1,0 +1,17 @@
+apiVersion: v2
+name: docstream
+description: Event-driven AI document pipeline — API gateway, Kafka workers, and a CQRS query API
+type: application
+
+# Chart version tracks the chart; appVersion tracks the application.
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - kafka
+  - event-driven
+  - rag
+  - cqrs
+home: https://github.com/chetanchandane/doc-stream
+maintainers:
+  - name: Chetan Chandane

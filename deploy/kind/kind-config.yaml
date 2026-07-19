@@ -1,0 +1,32 @@
+# kind cluster for DocStream.
+#
+#   kind create cluster --config deploy/kind/kind-config.yaml
+#
+# Two workers so pods actually spread across nodes — which is the point: it
+# proves the services are stateless. With the old shared-filesystem storage this
+# topology would have broken ingestion, because the gateway and extraction
+# worker could land on different nodes. Object storage is what makes it work.
+#
+# Port mappings expose the two APIs on localhost without port-forwarding when an
+# ingress controller is installed; without one, use kubectl port-forward.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: docstream
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 30080   # NodePort -> host, for an ingress controller
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 30443
+        hostPort: 8443
+        protocol: TCP
+  - role: worker
+  - role: worker

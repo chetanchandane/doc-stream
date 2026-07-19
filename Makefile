@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install up down build up-all down-all logs logs-app topics ps ps-all test test-integration test-all lint fmt clean gateway worker enrichment projector query
+.PHONY: help install up down build up-all down-all logs logs-app topics ps ps-all test test-integration test-all lint fmt clean gateway worker enrichment projector query kind-up kind-down kind-load helm-lint helm-template helm-install helm-uninstall k8s-status k8s-forward k8s-logs
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -55,6 +55,54 @@ projector: ## Run the read-model projector (CQRS read side)
 
 query: ## Run the Query API (read side) on port 8001
 	uv run uvicorn docstream.query.app:app --reload --port 8001
+
+## --- Kubernetes (kind + Helm) ------------------------------------------------
+KIND_CLUSTER := docstream
+CHART        := deploy/helm/docstream
+RELEASE      := docstream
+IMAGES       := gateway extraction enrichment projector query migrate topics
+
+kind-up: ## Create the local kind cluster
+	kind create cluster --config deploy/kind/kind-config.yaml
+
+kind-down: ## Delete the kind cluster
+	kind delete cluster --name $(KIND_CLUSTER)
+
+kind-load: build ## Load locally-built images into the kind nodes
+	@for img in $(IMAGES); do \
+		echo "loading docstream/$$img:dev"; \
+		kind load docker-image docstream/$$img:dev --name $(KIND_CLUSTER); \
+	done
+
+helm-lint: ## Lint the chart
+	helm lint $(CHART)
+
+helm-template: ## Render the chart locally (no cluster needed)
+	helm template $(RELEASE) $(CHART)
+
+helm-install: ## Install/upgrade the chart into kind (keys read from the environment)
+	@test -n "$$DOCSTREAM_EMBEDDING__API_KEY" || { echo "set DOCSTREAM_EMBEDDING__API_KEY"; exit 1; }
+	@test -n "$$DOCSTREAM_LLM__API_KEY" || { echo "set DOCSTREAM_LLM__API_KEY"; exit 1; }
+	@# Piped via stdin, NOT --set: keeps the keys out of shell history, the
+	@# process list, and any CI log that echoes the command.
+	@printf 'secrets:\n  embeddingApiKey: "%s"\n  llmApiKey: "%s"\n' \
+		"$$DOCSTREAM_EMBEDDING__API_KEY" "$$DOCSTREAM_LLM__API_KEY" \
+		| helm upgrade --install $(RELEASE) $(CHART) -f - --wait --timeout 10m
+
+helm-uninstall: ## Remove the release
+	helm uninstall $(RELEASE)
+
+k8s-status: ## Pods and services for the release
+	kubectl get pods,svc -l app.kubernetes.io/instance=$(RELEASE)
+
+k8s-forward: ## Port-forward both APIs (gateway :8000, query :8001)
+	@echo "gateway -> http://localhost:8000 ; query -> http://localhost:8001 (Ctrl-C to stop)"
+	kubectl port-forward svc/docstream-gateway 8000:8000 & \
+	kubectl port-forward svc/docstream-query 8001:8001 & \
+	wait
+
+k8s-logs: ## Tail logs from every app pod
+	kubectl logs -l app.kubernetes.io/part-of=docstream --all-containers --tail=100 -f
 
 test: ## Run the unit test suite (fast, no Docker)
 	uv run pytest

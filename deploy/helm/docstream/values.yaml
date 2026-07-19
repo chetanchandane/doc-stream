@@ -1,0 +1,164 @@
+# DocStream Helm values.
+#
+# Defaults target a LOCAL kind cluster: locally-built :dev images with
+# pullPolicy Never, and the bundled dev infrastructure enabled. For a real
+# cluster, push images to a registry and set infra.enabled=false so you can
+# point at managed Kafka/Postgres/Qdrant/S3.
+
+nameOverride: ""
+# Fixed so resources are named docstream-gateway rather than
+# <release>-docstream-gateway; keeps kubectl/port-forward commands readable.
+fullnameOverride: "docstream"
+
+image:
+  # One image per service, all sharing this repo prefix and tag:
+  #   docstream/gateway:dev, docstream/extraction:dev, ...
+  repository: docstream
+  tag: dev
+  # Never = use the image already loaded into the kind node (kind load ...).
+  # Switch to IfNotPresent when pulling from a registry.
+  pullPolicy: Never
+
+# ---------------------------------------------------------------------------
+# Application config -> ConfigMap. These are non-secret settings; anything
+# sensitive belongs in `secrets` below.
+# ---------------------------------------------------------------------------
+config:
+  logLevel: INFO
+  env: kubernetes
+
+  qdrant:
+    collection: documents
+    vectorSize: 1536
+
+  embedding:
+    model: text-embedding-3-small
+    dim: 1536
+    chunkSize: 512
+    chunkOverlap: 64
+
+  llm:
+    model: claude-sonnet-4-6
+    maxTokens: 1024
+
+  consumer:
+    maxAttempts: 5
+    backoffSeconds: 1.0
+
+  query:
+    minScore: 0.2
+    relativeCutoff: 0.5
+
+  storage:
+    bucket: docstream
+
+# ---------------------------------------------------------------------------
+# Secrets. For a demo these are rendered into a Secret from these values; in a
+# real cluster set existingSecret and manage it out of band (Sealed Secrets,
+# External Secrets, SOPS...).
+# ---------------------------------------------------------------------------
+secrets:
+  existingSecret: ""
+  embeddingApiKey: ""
+  llmApiKey: ""
+  postgresPassword: docstream
+  storageAccessKey: docstream
+  storageSecretKey: docstream123
+
+# ---------------------------------------------------------------------------
+# Per-service settings. Workers expose a health port for probes; the two HTTP
+# services expose their API port.
+# ---------------------------------------------------------------------------
+services:
+  gateway:
+    replicas: 1
+    port: 8000
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+
+  extraction:
+    replicas: 1
+    healthPort: 8080
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+
+  enrichment:
+    replicas: 1
+    healthPort: 8080
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+
+  projector:
+    replicas: 1
+    healthPort: 8080
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 250m, memory: 256Mi }
+
+  query:
+    replicas: 2 # the read path is what we scale independently (CQRS payoff)
+    port: 8001
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 70
+
+# ---------------------------------------------------------------------------
+# Bootstrap jobs. Both run as Helm hooks BEFORE the app pods start, so a fresh
+# install works with no manual steps.
+# ---------------------------------------------------------------------------
+jobs:
+  migrate:
+    enabled: true
+    backoffLimit: 3
+  topics:
+    enabled: true
+    backoffLimit: 3
+
+ingress:
+  enabled: false
+  className: nginx
+  host: docstream.local
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Bundled DEV infrastructure — single replica, no HA, ephemeral by default.
+# Good enough to demo the whole system on kind with one command.
+# In production set infra.enabled=false and point the endpoints at managed
+# services (MSK/Confluent, RDS, Qdrant Cloud, S3).
+# ---------------------------------------------------------------------------
+infra:
+  enabled: true
+
+  postgres:
+    image: postgres:16
+    database: docstream
+    username: docstream
+    storage: 1Gi
+
+  kafka:
+    image: apache/kafka:3.9.0
+    storage: 1Gi
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    storage: 1Gi
+
+  minio:
+    image: minio/minio:latest
+    storage: 1Gi
+
+# External endpoints, used when infra.enabled=false. When it's true these are
+# ignored and the in-cluster service names are used instead.
+external:
+  kafkaBootstrap: ""
+  postgresDsn: ""
+  qdrantUrl: ""
+  storageEndpoint: ""

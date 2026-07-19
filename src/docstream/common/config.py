@@ -103,6 +103,14 @@ class QuerySettings(BaseSettings):
     default_limit: int = 5
 
 
+class WorkerSettings(BaseSettings):
+    """Runtime knobs for the Kafka workers (which have no HTTP app of their own)."""
+
+    # Port for the liveness/readiness endpoint Kubernetes probes. Each worker
+    # runs in its own pod, so they can all share the same port number.
+    health_port: int = 8080
+
+
 class ConsumerSettings(BaseSettings):
     """Retry + dead-letter policy shared by the workers.
 
@@ -150,6 +158,7 @@ class Settings(BaseSettings):
     relay: RelaySettings = Field(default_factory=RelaySettings)
     consumer: ConsumerSettings = Field(default_factory=ConsumerSettings)
     query: QuerySettings = Field(default_factory=QuerySettings)
+    worker: WorkerSettings = Field(default_factory=WorkerSettings)
 
 
 @lru_cache

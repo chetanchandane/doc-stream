@@ -1,0 +1,311 @@
+{{- /*
+DEV-ONLY infrastructure so `helm install` on kind brings up a working system in
+one command.
+
+Every component here is single-replica with no HA, no backups, and no tuning.
+That is deliberate: this exists to demo the application, not to run a database.
+For anything real set infra.enabled=false and point `external.*` at managed
+services (MSK/Confluent, RDS, Qdrant Cloud, S3) — the app can't tell the
+difference, since it only ever sees endpoints from the ConfigMap.
+*/}}
+{{- if .Values.infra.enabled }}
+{{- $fullname := include "docstream.fullname" . -}}
+
+# --------------------------------------------------------------------------- #
+# PostgreSQL
+# --------------------------------------------------------------------------- #
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ $fullname }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.infra.postgres.image }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.infra.postgres.username | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.infra.postgres.database | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "docstream.secretName" . }}
+                  key: postgresPassword
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.infra.postgres.username | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.infra.postgres.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector:
+    {{- include "docstream.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+
+# --------------------------------------------------------------------------- #
+# Kafka (KRaft, single node — no ZooKeeper)
+# --------------------------------------------------------------------------- #
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-kafka
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka
+spec:
+  serviceName: {{ $fullname }}-kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "kafka") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "kafka") | nindent 8 }}
+    spec:
+      containers:
+        - name: kafka
+          image: {{ .Values.infra.kafka.image }}
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "1@localhost:9093"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            # Advertised as the Service DNS name so client pods can reach it.
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://{{ $fullname }}-kafka:9092"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+              value: "0"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
+            - name: KAFKA_LOG_DIRS
+              value: /var/lib/kafka/data
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka
+          readinessProbe:
+            tcpSocket:
+              port: kafka
+            initialDelaySeconds: 20
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.infra.kafka.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-kafka
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka
+spec:
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+  selector:
+    {{- include "docstream.selectorLabels" (dict "ctx" . "component" "kafka") | nindent 4 }}
+
+# --------------------------------------------------------------------------- #
+# Qdrant
+# --------------------------------------------------------------------------- #
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-qdrant
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  serviceName: {{ $fullname }}-qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "qdrant") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "qdrant") | nindent 8 }}
+    spec:
+      containers:
+        - name: qdrant
+          image: {{ .Values.infra.qdrant.image }}
+          ports:
+            - name: http
+              containerPort: 6333
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.infra.qdrant.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-qdrant
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  ports:
+    - name: http
+      port: 6333
+      targetPort: http
+  selector:
+    {{- include "docstream.selectorLabels" (dict "ctx" . "component" "qdrant") | nindent 4 }}
+
+# --------------------------------------------------------------------------- #
+# MinIO (S3-compatible object storage)
+# --------------------------------------------------------------------------- #
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-minio
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  serviceName: {{ $fullname }}-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "minio") | nindent 8 }}
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.infra.minio.image }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "docstream.secretName" . }}
+                  key: storageAccessKey
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "docstream.secretName" . }}
+                  key: storageSecretKey
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /minio/health/live, port: s3 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.infra.minio.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-minio
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+    - name: console
+      port: 9001
+      targetPort: console
+  selector:
+    {{- include "docstream.selectorLabels" (dict "ctx" . "component" "minio") | nindent 4 }}
+{{- end }}

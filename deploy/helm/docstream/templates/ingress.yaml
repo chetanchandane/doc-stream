@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullname := include "docstream.fullname" . -}}
+# Routes both APIs under one host: the write path at /documents and /jobs, the
+# read path at /search, /ask, and /documents-view.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /search
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-query
+                port:
+                  number: {{ .Values.services.query.port }}
+          - path: /ask
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-query
+                port:
+                  number: {{ .Values.services.query.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-gateway
+                port:
+                  number: {{ .Values.services.gateway.port }}
+{{- end }}

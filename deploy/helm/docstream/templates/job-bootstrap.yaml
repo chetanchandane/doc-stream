@@ -1,0 +1,76 @@
+{{- /*
+Bootstrap Jobs: migrations and Kafka topic creation.
+
+These are ORDINARY resources, not Helm hooks — deliberately.
+
+The obvious translation of docker-compose's `depends_on: service_completed_
+successfully` is a pre-install hook, but that breaks in two ways:
+
+  1. Hooks run BEFORE the release's normal manifests, so the ConfigMap and
+     Secret these Jobs read don't exist yet -> CreateContainerConfigError.
+  2. With infra.enabled, Postgres and Kafka are also normal manifests, so a
+     pre-install hook would run before the database it needs even exists.
+
+Kubernetes has no "wait for another resource" primitive, so the idiomatic
+pattern is an init container that polls the dependency. Helm's install order
+already creates ConfigMaps and Secrets before Jobs, which fixes (1); the init
+containers fix (2).
+
+The Job name carries .Release.Revision because a Job's pod template is
+immutable — reusing the name would make `helm upgrade` fail. Each revision gets
+a fresh Job, and ttlSecondsAfterFinished reaps the old ones.
+*/}}
+{{- $fullname := include "docstream.fullname" . -}}
+
+{{- if .Values.jobs.migrate.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: {{ .Values.jobs.migrate.backoffLimit }}
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- include "docstream.waitForPostgres" . | nindent 6 }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}/migrate:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- include "docstream.env" . | nindent 12 }}
+{{- end }}
+
+{{- if .Values.jobs.topics.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-topics-{{ .Release.Revision }}
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: topics
+spec:
+  backoffLimit: {{ .Values.jobs.topics.backoffLimit }}
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "topics") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- include "docstream.waitForKafka" . | nindent 6 }}
+      containers:
+        - name: topics
+          image: "{{ .Values.image.repository }}/topics:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- include "docstream.env" . | nindent 12 }}
+{{- end }}

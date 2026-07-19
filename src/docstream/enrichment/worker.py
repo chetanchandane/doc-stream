@@ -182,6 +182,7 @@ def _build_dependencies(settings):
 async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     """Consume documents.extracted until cancelled."""
     from docstream.common.messaging import KafkaConsumer, KafkaProducer
+    from docstream.common.health import start_health_server
     from docstream.enrichment.qdrant_store import ensure_collection
 
     settings = get_settings()
@@ -194,6 +195,10 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
 
     producer = KafkaProducer(settings.kafka)
     await producer.start()
+
+    # Gives Kubernetes something to probe: a hung worker fails liveness
+    # instead of silently consuming nothing.
+    health = await start_health_server(settings.worker.health_port)
 
     consumer = KafkaConsumer(
         settings.kafka,
@@ -240,6 +245,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     finally:
         await consumer.stop()
         await producer.stop()
+        health.close()
 
 
 def main() -> None:

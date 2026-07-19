@@ -80,12 +80,17 @@ async def _count_views(session: AsyncSession) -> int:
 async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     """Consume documents.enriched until cancelled."""
     from docstream.common.messaging import KafkaConsumer, KafkaProducer
+    from docstream.common.health import start_health_server
 
     settings = get_settings()
     sm = get_sessionmaker()
 
     producer = KafkaProducer(settings.kafka)
     await producer.start()
+
+    # Gives Kubernetes something to probe: a hung worker fails liveness
+    # instead of silently consuming nothing.
+    health = await start_health_server(settings.worker.health_port)
 
     consumer = KafkaConsumer(
         settings.kafka,
@@ -119,6 +124,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     finally:
         await consumer.stop()
         await producer.stop()
+        health.close()
 
 
 def main() -> None:

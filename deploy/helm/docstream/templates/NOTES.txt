@@ -1,0 +1,44 @@
+DocStream {{ .Chart.AppVersion }} installed as "{{ .Release.Name }}".
+
+Migrations and Kafka topics ran as pre-install hooks, so the pipeline is ready
+once the pods report Ready:
+
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+Reach the APIs by port-forwarding (no ingress by default):
+
+  kubectl port-forward svc/{{ include "docstream.fullname" . }}-gateway {{ .Values.services.gateway.port }}:{{ .Values.services.gateway.port }}
+  kubectl port-forward svc/{{ include "docstream.fullname" . }}-query {{ .Values.services.query.port }}:{{ .Values.services.query.port }}
+
+Then, in another shell:
+
+  # write path
+  curl -F "file=@/tmp/lease.txt" http://localhost:{{ .Values.services.gateway.port }}/documents
+  curl http://localhost:{{ .Values.services.gateway.port }}/jobs/<job_id>
+
+  # read path
+  curl http://localhost:{{ .Values.services.query.port }}/documents
+  curl "http://localhost:{{ .Values.services.query.port }}/search?q=security+deposit"
+  curl -X POST http://localhost:{{ .Values.services.query.port }}/ask \
+    -H 'Content-Type: application/json' \
+    -d '{"question":"What is the security deposit?"}'
+
+{{ if not .Values.secrets.existingSecret }}
+{{- if or (not .Values.secrets.embeddingApiKey) (not .Values.secrets.llmApiKey) }}
+WARNING: embeddingApiKey and/or llmApiKey are empty. Ingestion will reach the
+enrichment stage and then fail. Set them:
+
+  helm upgrade {{ .Release.Name }} deploy/helm/docstream \
+    --set secrets.embeddingApiKey=sk-... \
+    --set secrets.llmApiKey=sk-ant-...
+{{- end }}
+{{- end }}
+
+{{ if .Values.infra.enabled }}
+NOTE: bundled dev infrastructure is enabled (Postgres, Kafka, Qdrant, MinIO) —
+single-replica and not production grade. For a real cluster:
+
+  --set infra.enabled=false \
+  --set external.kafkaBootstrap=... --set external.postgresDsn=... \
+  --set external.qdrantUrl=... --set external.storageEndpoint=...
+{{- end }}

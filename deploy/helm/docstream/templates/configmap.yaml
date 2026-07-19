@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "docstream.configMapName" . }}
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+data:
+  env: {{ .Values.config.env | quote }}
+  logLevel: {{ .Values.config.logLevel | quote }}
+
+  # Endpoints resolve to in-cluster Services when infra.enabled, else external.
+  kafkaBootstrap: {{ include "docstream.kafkaBootstrap" . | quote }}
+  qdrantUrl: {{ include "docstream.qdrantUrl" . | quote }}
+  storageEndpoint: {{ include "docstream.storageEndpoint" . | quote }}
+
+  qdrantCollection: {{ .Values.config.qdrant.collection | quote }}
+  qdrantVectorSize: {{ .Values.config.qdrant.vectorSize | quote }}
+
+  embeddingModel: {{ .Values.config.embedding.model | quote }}
+  embeddingDim: {{ .Values.config.embedding.dim | quote }}
+  embeddingChunkSize: {{ .Values.config.embedding.chunkSize | quote }}
+  embeddingChunkOverlap: {{ .Values.config.embedding.chunkOverlap | quote }}
+
+  llmModel: {{ .Values.config.llm.model | quote }}
+  llmMaxTokens: {{ .Values.config.llm.maxTokens | quote }}
+
+  consumerMaxAttempts: {{ .Values.config.consumer.maxAttempts | quote }}
+  consumerBackoffSeconds: {{ .Values.config.consumer.backoffSeconds | quote }}
+
+  queryMinScore: {{ .Values.config.query.minScore | quote }}
+  queryRelativeCutoff: {{ .Values.config.query.relativeCutoff | quote }}
+
+  storageBucket: {{ .Values.config.storage.bucket | quote }}

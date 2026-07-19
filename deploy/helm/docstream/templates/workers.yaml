@@ -1,0 +1,68 @@
+{{- /*
+The three Kafka workers. They share a shape, so they're generated from a list
+rather than copy-pasted: same env, same probe strategy, different image and
+component name.
+
+Probes hit the small health server each worker runs (common/health.py). Without
+it a *hung* worker — wedged on a connection, not crashed — would keep its pod
+Ready while consuming nothing.
+
+No Service objects: nothing calls these workers, they pull from Kafka. Scaling
+them is a matter of replicas vs. topic partitions (3 partitions today, so
+replicas above 3 would idle).
+*/}}
+{{- $fullname := include "docstream.fullname" . -}}
+{{- $workers := list
+      (dict "name" "extraction" "cfg" .Values.services.extraction)
+      (dict "name" "enrichment" "cfg" .Values.services.enrichment)
+      (dict "name" "projector"  "cfg" .Values.services.projector)
+-}}
+{{- range $i, $w := $workers }}
+{{- if $i }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $w.name }}
+  labels:
+    {{- include "docstream.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $w.name }}
+spec:
+  replicas: {{ $w.cfg.replicas }}
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" $ "component" $w.name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.selectorLabels" (dict "ctx" $ "component" $w.name) | nindent 8 }}
+      annotations:
+        # Roll the pods when config changes, so a ConfigMap edit actually takes
+        # effect instead of silently waiting for the next unrelated deploy.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+    spec:
+      {{- include "docstream.waitForInfra" $ | nindent 6 }}
+      containers:
+        - name: {{ $w.name }}
+          image: "{{ $.Values.image.repository }}/{{ $w.name }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ $w.cfg.healthPort }}
+          env:
+            {{- include "docstream.env" $ | nindent 12 }}
+            - name: DOCSTREAM_WORKER__HEALTH_PORT
+              value: {{ $w.cfg.healthPort | quote }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml $w.cfg.resources | nindent 12 }}
+{{- end }}
