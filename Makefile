@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install up down logs topics ps test lint fmt clean gateway worker enrichment projector query
+.PHONY: help install up down logs topics ps test test-integration test-all lint fmt clean gateway worker enrichment projector query
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -39,8 +39,14 @@ projector: ## Run the read-model projector (CQRS read side)
 query: ## Run the Query API (read side) on port 8001
 	uv run uvicorn docstream.query.app:app --reload --port 8001
 
-test: ## Run the test suite
+test: ## Run the unit test suite (fast, no Docker)
 	uv run pytest
+
+test-integration: ## Run Docker-backed integration tests (real Kafka/Postgres/Qdrant)
+	uv run pytest -m integration -v
+
+test-all: ## Run unit + integration tests
+	uv run pytest -m "integration or not integration" -v
 
 lint: ## Lint with ruff
 	uv run ruff check .

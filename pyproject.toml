@@ -63,3 +63,10 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: needs a Docker daemon (testcontainers); excluded from the default run",
+]
+# Integration tests are slow and require Docker, so they're opt-in:
+#   make test              -> unit only
+#   make test-integration  -> the Docker-backed suite
+addopts = "-m 'not integration'"
