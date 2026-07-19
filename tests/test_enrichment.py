@@ -65,7 +65,7 @@ async def _seed_extracted_job(sessionmaker, storage, text: str):
             )
         document_id, job_id = job.document_id, job.id
 
-    text_uri = storage.save(document_id, "report.txt.extracted.txt", text.encode())
+    text_uri = storage.save_sync(document_id, "report.txt.extracted.txt", text.encode())
 
     envelope = make_event(
         DocumentExtracted(
@@ -156,7 +156,7 @@ async def test_handle_extracted_is_idempotent_on_vectors(sessionmaker, tmp_path)
 async def test_handle_extracted_missing_job_is_noop(sessionmaker, tmp_path):
     storage = LocalStorage(tmp_path / "store")
     qdrant = FakeQdrant()
-    text_uri = storage.save("ghost", "t.txt", b"orphan text")
+    text_uri = storage.save_sync("ghost", "t.txt", b"orphan text")
 
     envelope = make_event(
         DocumentExtracted(

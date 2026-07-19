@@ -12,13 +12,14 @@ from docstream.common.config import get_settings
 @pytest_asyncio.fixture
 async def client(sessionmaker, tmp_path, monkeypatch):
     # Point storage at a temp dir and keep the relay out of the app lifespan.
+    monkeypatch.setenv("DOCSTREAM_STORAGE__BACKEND", "local")
     monkeypatch.setenv("DOCSTREAM_STORAGE__DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("DOCSTREAM_RELAY__RUN_IN_PROCESS", "false")
     get_settings.cache_clear()
-    # storage helper is also cached
-    from docstream.storage import local as storage_local
+    # The backend factory is cached too, and now lives on the package.
+    import docstream.storage as storage_pkg
 
-    storage_local.get_storage.cache_clear()
+    storage_pkg.get_storage.cache_clear()
 
     from docstream.gateway.app import app
 

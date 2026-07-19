@@ -95,7 +95,7 @@ async def test_enrichment_skips_duplicate_event(sessionmaker, tmp_path):
                 storage_uri="",
             )
         document_id, job_id = job.document_id, job.id
-    text_uri = storage.save(document_id, "doc.txt.extracted.txt", text.encode())
+    text_uri = storage.save_sync(document_id, "doc.txt.extracted.txt", text.encode())
 
     envelope = make_event(
         DocumentExtracted(
@@ -155,7 +155,7 @@ async def test_extraction_skips_duplicate_event(sessionmaker, tmp_path):
                 storage_uri="",
             )
         document_id, job_id = job.document_id, job.id
-    storage_uri = storage.save(document_id, "lease.txt", b"lease terms")
+    storage_uri = storage.save_sync(document_id, "lease.txt", b"lease terms")
     async with sessionmaker() as session:
         async with session.begin():
             j = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one()

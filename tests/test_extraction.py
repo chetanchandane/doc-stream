@@ -46,7 +46,7 @@ async def test_handle_ingested_extracts_and_emits(sessionmaker, tmp_path):
             )
         document_id, job_id = job.document_id, job.id
 
-    storage_uri = storage.save(document_id, "lease.txt", b"lease terms")
+    storage_uri = storage.save_sync(document_id, "lease.txt", b"lease terms")
     async with sessionmaker() as session:
         async with session.begin():
             j = (

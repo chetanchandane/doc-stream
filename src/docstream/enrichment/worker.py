@@ -39,7 +39,7 @@ from docstream.enrichment.chunking import chunk_text
 from docstream.enrichment.embedding import Embedder
 from docstream.enrichment.llm import LLM
 from docstream.enrichment.qdrant_store import upsert_chunks
-from docstream.storage import LocalStorage, get_storage
+from docstream.storage import Storage, get_storage
 
 log = logging.getLogger("docstream.enrichment")
 
@@ -48,7 +48,7 @@ SOURCE = "enrichment-worker"
 
 async def handle_extracted(
     session: AsyncSession,
-    storage: LocalStorage,
+    storage: Storage,
     qdrant,
     embedder: Embedder,
     llm: LLM,
@@ -84,7 +84,7 @@ async def handle_extracted(
 
     job.status = JobStatus.ENRICHING
 
-    text = storage.read(payload.text_uri).decode("utf-8")
+    text = (await storage.read(payload.text_uri)).decode("utf-8")
     chunks = chunk_text(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     vectors = await embedder.embed(chunks)

@@ -63,9 +63,25 @@ class LLMSettings(BaseSettings):
 
 
 class StorageSettings(BaseSettings):
-    """Where the API Gateway persists raw uploaded bytes (local FS for now)."""
+    """Where raw uploaded bytes and extracted text live.
 
+    ``local`` is fine in tests and single-process dev. Once services run as
+    separate containers/pods they no longer share a filesystem, so anything
+    beyond a single node needs ``s3`` (MinIO locally, S3 in a cluster).
+    """
+
+    backend: str = "local"  # "local" | "s3"
+
+    # --- local backend ---
     dir: str = ".data/uploads"
+
+    # --- s3 backend (MinIO or AWS) ---
+    bucket: str = "docstream"
+    # Point at MinIO locally (http://minio:9000); leave unset for real AWS.
+    endpoint_url: str | None = None
+    access_key: str = ""
+    secret_key: str = ""
+    region: str = "us-east-1"
 
 
 class QuerySettings(BaseSettings):

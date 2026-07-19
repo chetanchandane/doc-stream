@@ -68,7 +68,7 @@ async def ingest_document(
     import uuid
 
     provisional_id = str(uuid.uuid4())
-    storage_uri = storage.save(
+    storage_uri = await storage.save(
         provisional_id, file.filename or "document.bin", data
     )
 

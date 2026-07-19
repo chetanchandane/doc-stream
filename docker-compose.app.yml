@@ -25,7 +25,13 @@ x-app-env: &app-env
   DOCSTREAM_REDIS__URL: redis://redis:6379/0
   DOCSTREAM_QDRANT__URL: http://qdrant:6333
   DOCSTREAM_QDRANT__COLLECTION: ${DOCSTREAM_QDRANT__COLLECTION:-documents}
-  DOCSTREAM_STORAGE__DIR: /app/.data/uploads
+  # Object storage, not a shared volume: every service resolves s3:// URIs
+  # independently, so no filesystem is shared between containers.
+  DOCSTREAM_STORAGE__BACKEND: s3
+  DOCSTREAM_STORAGE__ENDPOINT_URL: http://minio:9000
+  DOCSTREAM_STORAGE__BUCKET: ${DOCSTREAM_STORAGE__BUCKET:-docstream}
+  DOCSTREAM_STORAGE__ACCESS_KEY: docstream
+  DOCSTREAM_STORAGE__SECRET_KEY: docstream123
   DOCSTREAM_LOG_LEVEL: ${DOCSTREAM_LOG_LEVEL:-INFO}
   # Secrets are passed through from your shell/.env — never baked into an image.
   DOCSTREAM_EMBEDDING__API_KEY: ${DOCSTREAM_EMBEDDING__API_KEY:-}
@@ -35,6 +41,8 @@ x-infra-ready: &infra-ready
   kafka:
     condition: service_healthy
   postgres:
+    condition: service_healthy
+  minio:
     condition: service_healthy
 
 services:
@@ -70,11 +78,6 @@ services:
     environment: *app-env
     ports:
       - "8000:8000"
-    volumes:
-      # Shared with extraction/enrichment: the gateway writes uploaded bytes
-      # here and the workers read them. Without this they'd each get their own
-      # empty layer and extraction would fail to find the file.
-      - uploads:/app/.data
     depends_on:
       <<: *infra-ready
       migrate:
@@ -89,8 +92,6 @@ services:
       target: extraction
     image: docstream/extraction:dev
     environment: *app-env
-    volumes:
-      - uploads:/app/.data
     depends_on:
       <<: *infra-ready
       migrate:
@@ -105,8 +106,6 @@ services:
       target: enrichment
     image: docstream/enrichment:dev
     environment: *app-env
-    volumes:
-      - uploads:/app/.data
     depends_on:
       <<: *infra-ready
       migrate:
@@ -143,6 +142,3 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
-
-volumes:
-  uploads:

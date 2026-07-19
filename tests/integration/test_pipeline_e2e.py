@@ -71,7 +71,7 @@ async def test_full_pipeline_to_searchable_document(sm, qdrant_client, tmp_path)
     # a snapshot taken when it's staged, so mutating the Job row afterwards
     # would NOT update the already-staged event.
     provisional_id = str(uuid.uuid4())
-    storage_uri = storage.save(provisional_id, "lease.txt", SAMPLE.encode())
+    storage_uri = storage.save_sync(provisional_id, "lease.txt", SAMPLE.encode())
 
     async with sm() as session:
         async with session.begin():
@@ -168,7 +168,7 @@ async def test_replayed_events_do_not_duplicate_anything(sm, qdrant_client, tmp_
 
     # Bytes first, then the job — see the note in the test above.
     provisional_id = str(uuid.uuid4())
-    storage_uri = storage.save(provisional_id, "dup.txt", SAMPLE.encode())
+    storage_uri = storage.save_sync(provisional_id, "dup.txt", SAMPLE.encode())
 
     async with sm() as session:
         async with session.begin():

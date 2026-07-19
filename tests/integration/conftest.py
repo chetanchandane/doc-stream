@@ -160,6 +160,32 @@ async def qdrant_client(qdrant_url: str):
 
 
 # --------------------------------------------------------------------------- #
+# MinIO (S3-compatible object storage)
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="session")
+def minio_endpoint() -> Iterator[str]:
+    """A throwaway MinIO, yielded as an S3 endpoint URL."""
+    container = (
+        DockerContainer("minio/minio:latest")
+        .with_command("server /data")
+        .with_env("MINIO_ROOT_USER", "docstream")
+        .with_env("MINIO_ROOT_PASSWORD", "docstream123")
+        .with_exposed_ports(9000)
+    )
+    container.start()
+    try:
+        url = (
+            f"http://{container.get_container_host_ip()}:"
+            f"{container.get_exposed_port(9000)}"
+        )
+        # MinIO serves /minio/health/live once it's ready to accept S3 calls.
+        _wait_for_http(f"{url}/minio/health/live")
+        yield url
+    finally:
+        container.stop()
+
+
+# --------------------------------------------------------------------------- #
 # Kafka (optional; only used by the messaging contract test)
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="session")

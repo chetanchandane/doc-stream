@@ -33,7 +33,7 @@ from docstream.db.idempotency import mark_processed
 from docstream.db.models import Job, JobStatus
 from docstream.db.outbox import enqueue_event
 from docstream.extraction.text import extract_text
-from docstream.storage import LocalStorage, get_storage
+from docstream.storage import Storage, get_storage
 
 log = logging.getLogger("docstream.extraction")
 
@@ -42,7 +42,7 @@ SOURCE = "extraction-worker"
 
 async def handle_ingested(
     session: AsyncSession,
-    storage: LocalStorage,
+    storage: Storage,
     envelope: EventEnvelope,
 ) -> None:
     """Process one ingested event. The caller owns the transaction/commit."""
@@ -63,9 +63,9 @@ async def handle_ingested(
 
     job.status = JobStatus.EXTRACTING
 
-    data = storage.read(payload.storage_uri)
+    data = await storage.read(payload.storage_uri)
     result = extract_text(payload.filename, payload.content_type, data)
-    text_uri = storage.save(
+    text_uri = await storage.save(
         payload.document_id, f"{payload.filename}.extracted.txt", result.text.encode()
     )
 
