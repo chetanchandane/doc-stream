@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from aiokafka import ConsumerRecord
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRecord
 
 from docstream.common.config import KafkaSettings
 
@@ -41,7 +40,7 @@ class KafkaProducer:
             raise RuntimeError("KafkaProducer.start() must be called before publish().")
         await self._producer.send_and_wait(topic, value=value, key=key)
 
-    async def __aenter__(self) -> "KafkaProducer":
+    async def __aenter__(self) -> KafkaProducer:
         await self.start()
         return self
 
@@ -99,7 +98,7 @@ class KafkaConsumer:
             raise RuntimeError("KafkaConsumer.start() must be called before commit().")
         await self._consumer.commit()
 
-    async def __aenter__(self) -> "KafkaConsumer":
+    async def __aenter__(self) -> KafkaConsumer:
         await self.start()
         return self
 

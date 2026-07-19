@@ -308,7 +308,10 @@ async def test_answer_says_it_does_not_know_when_all_hits_are_weak(sessionmaker)
 def test_build_user_message_includes_citable_labels():
     msg = build_user_message(
         "q?",
-        [{"document_id": "d1", "filename": "a.pdf", "chunk_index": 2, "text": "body", "score": 0.5}],
+        [{
+            "document_id": "d1", "filename": "a.pdf",
+            "chunk_index": 2, "text": "body", "score": 0.5,
+        }],
     )
     assert "a.pdf" in msg and "chunk 2" in msg and "body" in msg and "q?" in msg
 

@@ -18,15 +18,15 @@ tested in isolation.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Annotated, Literal, TypeVar, Union
+from typing import Annotated, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid() -> str:
@@ -91,7 +91,7 @@ class DocumentEnriched(BaseModel):
 # Discriminated union of every payload type. Pydantic uses ``event_type`` to
 # pick the right model when parsing an unknown envelope off the wire.
 Payload = Annotated[
-    Union[DocumentIngested, DocumentExtracted, DocumentEnriched],
+    DocumentIngested | DocumentExtracted | DocumentEnriched,
     Field(discriminator="event_type"),
 ]
 

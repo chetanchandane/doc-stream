@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import socket
 import time
 import urllib.error
 import urllib.request
@@ -46,7 +45,7 @@ def _wait_for_http(url: str, timeout: float = 60.0) -> None:
         try:
             with urllib.request.urlopen(url, timeout=2):
                 return
-        except (urllib.error.URLError, OSError, socket.timeout) as exc:  # noqa: PERF203
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:  # noqa: PERF203
             last = exc
             time.sleep(0.5)
     raise RuntimeError(f"Timed out waiting for {url}: {last!r}")

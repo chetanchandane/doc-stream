@@ -79,8 +79,8 @@ async def _count_views(session: AsyncSession) -> int:
 
 async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     """Consume documents.enriched until cancelled."""
-    from docstream.common.messaging import KafkaConsumer, KafkaProducer
     from docstream.common.health import start_health_server
+    from docstream.common.messaging import KafkaConsumer, KafkaProducer
 
     settings = get_settings()
     sm = get_sessionmaker()

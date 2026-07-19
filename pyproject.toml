@@ -62,6 +62,17 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = [
+    # UP042 wants enum.StrEnum instead of (str, Enum). Not a safe swap here:
+    # StrEnum changes str() formatting ("pending" vs "JobStatus.PENDING"), and
+    # these values are persisted in Postgres and serialized onto Kafka events.
+    "UP042",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# B008 flags function calls in argument defaults, but Depends()/Query() in the
+# signature IS the FastAPI dependency-injection idiom, not a mutable-default bug.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.File", "fastapi.Form"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

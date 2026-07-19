@@ -13,10 +13,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from docstream.db import base as db_base
-from docstream.db.base import Base
 
 # Import models so their tables register on the metadata.
 from docstream.db import models  # noqa: F401
+from docstream.db.base import Base
 
 
 @pytest_asyncio.fixture

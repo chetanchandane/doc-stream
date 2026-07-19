@@ -31,7 +31,7 @@ class JobResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_job(cls, job: Job) -> "JobResponse":
+    def from_job(cls, job: Job) -> JobResponse:
         return cls(
             job_id=job.id,
             document_id=job.document_id,

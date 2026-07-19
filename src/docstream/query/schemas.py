@@ -51,7 +51,7 @@ class DocumentSummary(BaseModel):
     indexed_at: datetime
 
     @classmethod
-    def from_view(cls, view: DocumentView) -> "DocumentSummary":
+    def from_view(cls, view: DocumentView) -> DocumentSummary:
         return cls(
             document_id=view.document_id,
             job_id=view.job_id,

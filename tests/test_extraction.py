@@ -6,11 +6,11 @@ from sqlalchemy import select
 
 from docstream.common.events import (
     DocumentExtracted,
+    DocumentIngested,
     EventEnvelope,
     EventType,
     make_event,
 )
-from docstream.common.events import DocumentIngested
 from docstream.db.models import Job, JobStatus, OutboxEvent
 from docstream.extraction.text import extract_text
 from docstream.extraction.worker import handle_ingested

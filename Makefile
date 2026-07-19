@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install up down build up-all down-all logs logs-app topics ps ps-all test test-integration test-all lint fmt clean gateway worker enrichment projector query kind-up kind-down kind-load helm-lint helm-template helm-install helm-uninstall k8s-status k8s-forward k8s-logs
+.PHONY: ci help install up down build up-all down-all logs logs-app topics ps ps-all test test-integration test-all lint fmt clean gateway worker enrichment projector query kind-up kind-down kind-load helm-lint helm-template helm-install helm-uninstall k8s-status k8s-forward k8s-logs
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -115,6 +115,14 @@ test-all: ## Run unit + integration tests
 
 lint: ## Lint with ruff
 	uv run ruff check .
+
+ci: ## Run everything CI runs, locally (except the kind e2e)
+	uv lock --check
+	uv run ruff check .
+	uv run pytest -q
+	uv run pytest -m integration -v
+	helm lint $(CHART)
+	helm template $(RELEASE) $(CHART) > /dev/null
 
 fmt: ## Format with ruff
 	uv run ruff format .

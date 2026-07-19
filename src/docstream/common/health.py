@@ -49,7 +49,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
         path = parts[1] if len(parts) > 1 else "/"
         writer.write(_RESPONSE if path in _HEALTH_PATHS else _NOT_FOUND)
         await writer.drain()
-    except (TimeoutError, asyncio.TimeoutError, ConnectionError):
+    except (TimeoutError, ConnectionError):
         pass  # probe hung up or timed out; nothing useful to do
     finally:
         writer.close()

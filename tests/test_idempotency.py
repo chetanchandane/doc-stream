@@ -16,7 +16,7 @@ from docstream.common.events import (
 from docstream.db.idempotency import mark_processed
 from docstream.db.models import Job, JobStatus, OutboxEvent, ProcessedEvent
 from docstream.enrichment.embedding import FakeEmbedder
-from docstream.enrichment.llm import EnrichmentResult, FakeLLM
+from docstream.enrichment.llm import EnrichmentResult
 from docstream.enrichment.worker import handle_extracted
 from docstream.extraction.worker import handle_ingested
 from docstream.gateway.service import create_ingestion_job

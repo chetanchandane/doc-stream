@@ -46,7 +46,7 @@ async def process_with_retry(
     work: Callable[[], Awaitable[None]],
     *,
     envelope: EventEnvelope,
-    producer: "KafkaProducer",
+    producer: KafkaProducer,
     source_topic: str,
     max_attempts: int,
     backoff_seconds: float = 0.0,

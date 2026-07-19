@@ -12,13 +12,13 @@ implementations together; unit tests inject the Fake* variants.
 """
 
 from docstream.enrichment.chunking import chunk_text
-from docstream.enrichment.embedding import Embedder, OpenAIEmbedder, FakeEmbedder
-from docstream.enrichment.llm import LLM, EnrichmentResult, AnthropicLLM, FakeLLM
+from docstream.enrichment.embedding import Embedder, FakeEmbedder, OpenAIEmbedder
+from docstream.enrichment.llm import LLM, AnthropicLLM, EnrichmentResult, FakeLLM
 from docstream.enrichment.qdrant_store import (
     ensure_collection,
-    upsert_chunks,
-    search,
     point_id,
+    search,
+    upsert_chunks,
 )
 
 __all__ = [

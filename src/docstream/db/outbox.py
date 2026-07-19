@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,4 +62,4 @@ async def fetch_unpublished(session: AsyncSession, limit: int) -> Sequence[Outbo
 
 
 def mark_published(row: OutboxEvent) -> None:
-    row.published_at = datetime.now(timezone.utc)
+    row.published_at = datetime.now(UTC)

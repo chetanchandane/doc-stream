@@ -67,7 +67,9 @@ async def test_ensure_bucket_is_idempotent(s3):
 
 
 async def test_reading_a_missing_key_raises(s3):
-    with pytest.raises(Exception):  # botocore ClientError (NoSuchKey)
+    from botocore.exceptions import ClientError
+
+    with pytest.raises(ClientError):  # NoSuchKey
         await s3.read(f"s3://{s3.bucket}/nope/missing.txt")
 
 

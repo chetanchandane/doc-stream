@@ -181,8 +181,8 @@ def _build_dependencies(settings):
 
 async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     """Consume documents.extracted until cancelled."""
-    from docstream.common.messaging import KafkaConsumer, KafkaProducer
     from docstream.common.health import start_health_server
+    from docstream.common.messaging import KafkaConsumer, KafkaProducer
     from docstream.enrichment.qdrant_store import ensure_collection
 
     settings = get_settings()

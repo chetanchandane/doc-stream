@@ -10,10 +10,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
 from docstream.common.config import get_settings
-from docstream.db.base import Base
 
 # Import models so their tables register on Base.metadata.
 from docstream.db import models  # noqa: F401
+from docstream.db.base import Base
 
 config = context.config
 
