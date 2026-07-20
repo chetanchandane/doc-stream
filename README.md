@@ -1,246 +1,269 @@
-# DocStream — Event-Driven AI Document Pipeline
+# DocStream — Distributed AI Document Pipeline
 
-An asynchronous, event-driven service that ingests documents through an API,
-streams them through **Kafka** to worker services that run **LLM/RAG
-enrichment**, stores results and vectors in **Postgres + Qdrant**, and runs on
-**Kubernetes** with retries, dead-letter handling, autoscaling, and full
-observability.
+An **event-driven, distributed** document-intelligence platform. Documents are
+ingested through a **FastAPI** gateway, streamed over **Apache Kafka** to
+independently scalable **Python microservices** that extract text, generate
+**vector embeddings**, and run **LLM** classification and summarisation, then
+served back through a **CQRS** read API that answers questions with grounded,
+cited **RAG** responses.
 
-> Status: **Week 2 complete.** The pipeline runs end to end and is queryable.
-> Submit a document and it flows API Gateway → outbox → `documents.ingested` →
-> extraction → `documents.extracted` → enrichment (Qdrant vectors + LLM
-> classification/summary) → `documents.enriched` → read-model projection. A
-> separate Query API then serves semantic search and grounded, cited answers over
-> your documents. Every consumer is idempotent, every stage retries and
-> dead-letters, and the whole flow is covered by unit and Docker-backed
-> integration tests. Kubernetes, Helm, and CI/CD land in Week 3.
+Runs on **Kubernetes** via a **Helm** chart, with **PostgreSQL**, **Qdrant**,
+and **S3/MinIO** for state, and **Prometheus + Grafana** for observability.
+Built around the distributed-systems patterns that make async pipelines
+survivable: the **transactional outbox**, **idempotent consumers**,
+**retries with dead-letter queues**, and **eventual consistency** between
+write and read models.
+
+**Stack:** Python · FastAPI · Apache Kafka (KRaft) · PostgreSQL · SQLAlchemy ·
+Alembic · Qdrant · S3/MinIO · Redis · OpenAI embeddings · Anthropic Claude ·
+Docker · Kubernetes · Helm · kind · Prometheus · Grafana · GitHub Actions ·
+pytest · testcontainers · uv
+
+---
+
+## What it does
+
+Submit a document (PDF or text) to the API. It is queued, text-extracted,
+chunked, embedded into a vector database, classified and summarised by an LLM,
+and projected into a read model. You can then run semantic search across your
+corpus, or ask questions in natural language and get answers grounded in your
+own documents with citations back to the source chunk.
+
+Every stage is a separate deployable service communicating only through events.
+Nothing blocks the caller: ingestion returns immediately with a job id.
+
+---
 
 ## Architecture
 
-The system is split **CQRS-style**: a write path that ingests and enriches, and a
-read path that serves queries. They meet only at the event log.
+The system is split **CQRS**-style — a write path that ingests and enriches, and
+a read path that serves queries. They share no database tables and meet only at
+the event log.
 
 ```
-  COMMAND SIDE (write)                                    QUERY SIDE (read)
-  ────────────────────                                    ─────────────────
-        ┌─────────────┐   documents.ingested   ┌───────────────────┐
-Client ▶│ API Gateway │ ─────────────────────▶ │ Extraction Worker │
- (POST) │  (FastAPI)  │      (Kafka)           │   text / OCR      │
-        └──────┬──────┘                        └─────────┬─────────┘
-               │ job + outbox row                        │ documents.extracted
-               │ (one transaction)                       ▼
-               ▼                              ┌──────────────────────┐
-        ┌─────────────┐                       │  Enrichment Worker   │
-        │  PostgreSQL │◀──────────────────────│  chunk → embed →     │
-        │  jobs       │                       │  classify + summarize│
-        │  outbox     │                       └───────┬──────┬───────┘
-        │  processed_ │                               │      │
-        │   events    │                    documents. │      ▼
-        │  document_  │                     enriched  │  ┌────────┐
-        │   view ◀────┼───────┐                       │  │ Qdrant │
-        └─────────────┘       │                       │  │vectors │
-                              │                       ▼  └───┬────┘
-                     ┌────────┴────────┐    ┌────────────┐   │
-                     │    Projector    │◀───│ DLQ topics │   │
-                     │ builds read model│    │ (failures) │   │
-                     └─────────────────┘    └────────────┘   │
-                                                             │
-        ┌─────────────┐   reads view + vectors               │
-        │  Query API  │◀─────────────────────────────────────┘
-        │  (FastAPI)  │   GET /search · POST /ask (RAG)
-        └─────────────┘
-  All services: Docker ▶ Kubernetes (Helm) ▶ Prometheus + Grafana + OpenTelemetry
+   COMMAND SIDE (write)                                  QUERY SIDE (read)
+   ────────────────────                                  ─────────────────
+
+           ┌─────────────┐   documents.ingested   ┌───────────────────┐
+  Client ─▶│ API Gateway │ ─────────────────────▶ │ Extraction Worker │
+   POST    │  (FastAPI)  │       (Kafka)          │   text / OCR      │
+           └──────┬──────┘                        └─────────┬─────────┘
+                  │ job row + outbox row                    │ documents.extracted
+                  │ in ONE transaction                      ▼
+                  ▼                              ┌──────────────────────┐
+           ┌─────────────┐                       │  Enrichment Worker   │
+           │ PostgreSQL  │◀──────────────────────│  chunk → embed →     │
+           │             │                       │  classify + summarise│
+           │  jobs       │                       └───┬──────────────┬───┘
+           │  outbox     │                           │              │
+           │  processed_ │              documents.   │              ▼
+           │   events    │               enriched    │        ┌──────────┐
+           │  document_  │                           │        │  Qdrant  │
+           │   view ◀────┼──────┐                    │        │ (vectors)│
+           └─────────────┘      │                    ▼        └────┬─────┘
+                                │           ┌────────────────┐     │
+                       ┌────────┴───────┐   │  DLQ topics    │     │
+                       │   Projector    │   │  (poison msgs) │     │
+                       │ builds read    │   └────────────────┘     │
+                       │ model          │                          │
+                       └────────────────┘                          │
+                                                                   │
+           ┌─────────────┐   reads view + vectors                  │
+           │  Query API  │◀────────────────────────────────────────┘
+           │  (FastAPI)  │   GET /search  ·  POST /ask  (RAG)
+           └─────────────┘
+
+   Object storage (S3/MinIO) holds document bytes — every service resolves
+   URIs independently, so no pod shares a filesystem.
+
+   All services: Docker ▶ Kubernetes (Helm) ▶ Prometheus + Grafana
 ```
 
-**Write flow:** the client submits a document to the API Gateway, which persists a
-job row and stages an event in the same transaction (transactional outbox); a
-relay drains it to Kafka. The extraction worker pulls text and emits the next
-event. The enrichment worker chunks and embeds the text into Qdrant, runs LLM
-classification and summarization, marks the job complete, and emits
-`documents.enriched`. Every emit goes through the outbox, so all services produce
-events the same reliable way. Failures retry on their own topic and dead-letter
-after N attempts.
+**Write path.** The gateway persists a job row and stages its event in the
+**same database transaction** (transactional outbox), so a job can never exist
+without its event, or vice versa. A relay drains the outbox to Kafka. The
+extraction worker pulls text and emits the next event; the enrichment worker
+chunks and embeds it into Qdrant, runs the LLM, and emits `documents.enriched`.
+Every service emits events the same reliable way.
 
-**Read flow:** a projector consumes `documents.enriched` and maintains the
-`document_view` read model — the only writer of that table. The Query API serves
-from that view plus Qdrant, and never touches the `jobs` write model, so read
-traffic scales independently of ingest. The cost is eventual consistency: a
-document becomes queryable moments after it's enriched.
+**Read path.** A projector consumes `documents.enriched` and maintains a
+denormalized `document_view` — the only writer of that table. The Query API
+serves from that view plus Qdrant and never touches the `jobs` write model, so
+read traffic scales independently of ingestion. The trade-off is deliberate
+**eventual consistency**: a document is queryable moments after enrichment.
 
-## Distributed-systems patterns (the point of the project)
+---
 
-| Pattern | Where it lives |
+## Distributed-systems patterns
+
+| Pattern | Implementation |
 |---|---|
-| Transactional outbox | `db/outbox.py` — job row + `outbox` row in one transaction; `gateway/relay.py` publishes to Kafka |
-| Idempotent consumers | `db/idempotency.py` — `(event_id, consumer_group)` claimed inside the handler's transaction via SAVEPOINT; a failed handler rolls the claim back so retries still work |
-| Retry + dead-letter topic | `common/retry.py` — re-publish to the source topic with `attempt+1`; route to `<topic>.DLQ` after `max_attempts` |
-| CQRS | `projection/worker.py` builds `document_view`; `query/` reads only that view + Qdrant, never the write model |
-| Eventual consistency | the read model trails the pipeline by the projector's lag |
-| Idempotent vector writes | deterministic UUIDv5 point ids, so a replayed event overwrites in place instead of duplicating |
-| Consumer-lag autoscaling | KEDA on Kafka lag (Week 3) |
-| Distributed tracing | OpenTelemetry across all services (Week 4) |
+| **Transactional outbox** | `db/outbox.py` — job row + outbox row committed atomically; `gateway/relay.py` publishes to Kafka |
+| **Idempotent consumers** | `db/idempotency.py` — `(event_id, consumer_group)` claimed inside the handler's transaction via SAVEPOINT. A failed handler rolls the claim back, so retries still work |
+| **Retry + dead-letter queue** | `common/retry.py` — failures re-publish to the source topic with `attempt+1`; exhausted events route to `<topic>.DLQ` |
+| **Exactly-once effects** | At-least-once Kafka delivery + idempotent handlers + deterministic UUIDv5 vector ids, so replays overwrite in place instead of duplicating |
+| **CQRS** | Separate write model (`jobs`) and read model (`document_view`), joined only by events |
+| **Eventual consistency** | Read model trails the pipeline by the projector's lag — measured, not assumed |
+| **Stateless services** | Object storage for document bytes; any pod resolves any URI, so pods schedule anywhere |
+| **Horizontal autoscaling** | HPA on the query service — the read path scales on its own |
 
-## Stack
+---
 
-FastAPI · aiokafka · Apache Kafka (KRaft) · PostgreSQL + SQLAlchemy + Alembic ·
-Qdrant · Redis · Docker · Kubernetes + Helm · Prometheus + Grafana ·
-OpenTelemetry · GitHub Actions · pytest + testcontainers · uv · k6
-
-## The event contract
+## Event contract
 
 Defined once in [`src/docstream/common`](src/docstream/common) so producers and
-consumers can't drift:
+consumers cannot drift.
 
 - **Topics** (`topics.py`): `documents.ingested` → `documents.extracted` →
-  `documents.enriched`, each with a `.DLQ` dead-letter twin.
+  `documents.enriched`, each with a `.DLQ` twin.
 - **Events** (`events.py`): every message is an `EventEnvelope` carrying
-  `event_id` (dedup key), `correlation_id` (tracing), `attempt` (retry/DLQ), and
-  a typed `payload`.
-- **Config** (`config.py`): 12-factor settings from env vars / `.env`.
+  `event_id` (dedup key), `correlation_id` (tracing), `attempt` (retry/DLQ
+  policy), and a typed, discriminated payload.
+- **Config** (`config.py`): 12-factor settings from environment variables.
 
-## Getting started
+---
 
-Prerequisites: [Docker](https://docs.docker.com/get-docker/) and
-[uv](https://docs.astral.sh/uv/).
+## Observability
+
+Prometheus scrapes every service; Grafana ships a provisioned dashboard
+(`deploy/helm/docstream/templates/dashboard.yaml`) built around four questions:
+
+- **CQRS lag** — Kafka consumer group lag, i.e. how stale the read model is.
+  Reported by an external `kafka-exporter` rather than self-reported, because a
+  wedged consumer stops updating its own metrics exactly when lag matters most.
+- **AI latency and cost** — embedding, LLM, and vector-store calls timed
+  separately, with p95/p99 and provider error rates.
+- **Retrieval quality** — similarity-score distribution of the best hit per
+  query, and how often the model declines because nothing cleared the relevance
+  cutoff.
+- **Orchestration** — pod restarts, HPA current/desired replicas, readiness.
+
+Plus retry, dead-letter, and deduplication counters — visible proof the
+fault-tolerance patterns are working.
+
+---
+
+## Quick start
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/),
+[uv](https://docs.astral.sh/uv/), and API keys for
+[OpenAI](https://platform.openai.com) (embeddings) and
+[Anthropic](https://console.anthropic.com) (LLM).
+
+### Option 1 — Local processes
 
 ```bash
-# 1. Install Python deps
-make install            # uv sync (installs the dev group too)
-
-# 2. Start local infra (Kafka, Postgres, Redis, Qdrant, kafka-ui)
-make up
-
-# 3. Create the Kafka topics
+make install                       # uv sync
+make up                            # Kafka, Postgres, Redis, Qdrant, MinIO, kafka-ui
 make topics
-
-# 4. Inspect topics in the browser
-open http://localhost:8080     # kafka-ui
-```
-
-`cp .env.example .env` if you want to override any defaults. Run `make help` to
-see every target.
-
-Enrichment calls OpenAI (embeddings) and Anthropic (classification/summary), so
-set those keys in `.env` before running the enrichment worker or Query API:
-
-```bash
-DOCSTREAM_EMBEDDING__API_KEY=sk-...
-DOCSTREAM_LLM__API_KEY=sk-ant-...
-```
-
-### Run the services
-
-Apply migrations once, then start the five services (one terminal each):
-
-```bash
+cp .env.example .env               # then add your API keys
 uv run alembic upgrade head
+```
 
-make gateway      # :8000  API Gateway (runs the outbox relay in-process)
+Run the five services, one terminal each:
+
+```bash
+make gateway      # :8000  ingest API (+ in-process outbox relay)
 make worker       #        extraction worker
-make enrichment   #        enrichment worker (Qdrant + LLM)
-make projector    #        read-model projector
-make query        # :8001  Query API (search + RAG)
+make enrichment   #        enrichment worker (embeddings + LLM)
+make projector    #        CQRS read-model projector
+make query        # :8001  query API (search + RAG)
 ```
 
-To run the relay as its own process instead, set
-`DOCSTREAM_RELAY__RUN_IN_PROCESS=false` and run `python -m docstream.gateway.relay`.
-
-### Ingest a document (write path)
+### Option 2 — Everything in Docker
 
 ```bash
-curl -F "file=@/path/to/lease.pdf" http://localhost:8000/documents
-# -> {"job_id": "...", "document_id": "...", "status": "pending"}
+export DOCSTREAM_EMBEDDING__API_KEY=sk-...
+export DOCSTREAM_LLM__API_KEY=sk-ant-...
+make build && make up-all
+```
 
+### Option 3 — Kubernetes (kind)
+
+```bash
+make kind-up                       # 3-node cluster
+make kind-load                     # build + load all 7 images
+export DOCSTREAM_EMBEDDING__API_KEY=sk-... DOCSTREAM_LLM__API_KEY=sk-ant-...
+make helm-install                  # migrations + topics run as bootstrap jobs
+make k8s-status
+make k8s-forward                   # gateway :8000, query :8001
+make k8s-observability             # Grafana :3000, Prometheus :9090
+```
+
+The Helm chart bundles dev infrastructure (Postgres, Kafka, Qdrant, MinIO) so a
+single command brings up a working system. For a real cluster, set
+`infra.enabled=false` and point `external.*` at managed services.
+
+---
+
+## Using it
+
+```bash
+# Ingest — returns immediately with a job id
+curl -F "file=@lease.pdf" http://localhost:8000/documents
+
+# Track it: pending → extracting → extracted → enriching → completed
 curl http://localhost:8000/jobs/<job_id>
-```
 
-Poll until `status` reaches `completed`, walking `pending → extracting →
-extracted → enriching → completed`. The response also carries the enrichment
-results (`classification`, `summary`, `chunk_count`). Watch the events flow
-through kafka-ui at http://localhost:8080.
+# Read side: what has been indexed
+curl http://localhost:8001/documents
 
-### Query it (read path)
+# Semantic search — matching excerpts, no LLM
+curl "http://localhost:8001/search?q=security+deposit&limit=3"
 
-```bash
-# What's been indexed (the read model)
-curl -s http://localhost:8001/documents | jq
-
-# Semantic search — returns matching excerpts, no LLM
-curl -s "http://localhost:8001/search?q=distributed%20systems&limit=3" | jq
-
-# Grounded RAG answer — retrieves, then answers with citations
-curl -s -X POST http://localhost:8001/ask \
+# RAG — grounded answer plus the sources it used
+curl -X POST http://localhost:8001/ask \
   -H 'Content-Type: application/json' \
-  -d '{"question":"What is the security deposit?","limit":5}' | jq
+  -d '{"question":"What is the security deposit and when is it due?"}'
 ```
 
-`/ask` returns the answer **and** the source excerpts it was grounded in, so you
+`/ask` returns the answer **and** the excerpts it was grounded in, so callers
 can verify the grounding rather than trust it.
+
+---
 
 ## Testing
 
 ```bash
-make test              # unit suite: fast, fully faked, no Docker
-make test-integration  # Docker-backed: real Kafka, Postgres, and Qdrant
-make test-all          # both
+make test              # unit: fully faked, no Docker, seconds
+make test-integration  # Docker-backed: real Kafka, Postgres, Qdrant, MinIO
+make ci                # everything CI runs, locally
 ```
 
-The unit suite fakes Qdrant and the LLM providers so it runs anywhere in seconds.
-The integration suite exists because fakes can only assert what you *believe* an
-API does — it runs the real clients against throwaway containers (testcontainers),
-covering Qdrant's point-id and query contracts, the full alembic migration chain
-on real Postgres, an end-to-end ingest → enrich → project → search flow, and
-envelope round-tripping through a real broker.
+The integration suite exists because fakes only assert what you *believe* an API
+does. It exercises the real clients against throwaway containers
+(testcontainers): Qdrant's point-id and query contracts, the full Alembic
+migration chain on real Postgres, an end-to-end ingest → enrich → project →
+search flow, and envelope round-tripping through a real broker.
 
-## Project layout
+CI additionally lints, validates the Helm chart, builds all seven images, and
+deploys to a kind cluster asserting **zero pod restarts** — not merely eventual
+readiness, since a crash-looping deployment can still converge.
+
+---
+
+## Layout
 
 ```
 doc-stream/
-├── docker-compose.yml         # local infra: Kafka, Postgres, Redis, Qdrant, UI
-├── Makefile                   # install / up / topics / test / lint
-├── pyproject.toml             # uv-managed deps (src layout)
-├── alembic/                   # async migrations (0001..0005)
-├── scripts/
-│   └── create_topics.py       # idempotent topic bootstrap
 ├── src/docstream/
-│   ├── common/                # the shared event contract
-│   │   ├── config.py          # nested 12-factor settings
-│   │   ├── events.py          # EventEnvelope + typed payloads
-│   │   ├── messaging.py       # aiokafka producer/consumer wrappers
-│   │   ├── retry.py           # retry + DLQ policy (shared by all workers)
-│   │   └── topics.py
-│   ├── db/                    # async SQLAlchemy
-│   │   ├── base.py
-│   │   ├── models.py          # Job, OutboxEvent, ProcessedEvent, DocumentView
-│   │   ├── outbox.py          # transactional-outbox helpers
-│   │   └── idempotency.py     # mark_processed dedup guard
-│   ├── storage/               # raw-bytes storage (local FS for now)
-│   ├── gateway/               # write API: ingest + job status, outbox relay
-│   ├── extraction/            # consume ingested -> emit extracted
-│   ├── enrichment/            # consume extracted -> Qdrant + LLM -> emit enriched
-│   │   ├── chunking.py        # text splitting
-│   │   ├── embedding.py       # Embedder protocol (OpenAI + fake)
-│   │   ├── qdrant_store.py    # collection, deterministic upsert, search
-│   │   ├── llm.py             # LLM protocol (Claude + fake)
-│   │   └── worker.py
-│   ├── projection/            # CQRS read side: enriched -> document_view
-│   │   └── worker.py
-│   └── query/                 # read API: search + grounded RAG answers
-│       ├── retrieval.py       # embed query -> Qdrant search
-│       ├── prompts.py         # grounded, cited answer prompt
-│       ├── generation.py      # Generator protocol (Claude + fake)
-│       ├── service.py         # transport-free orchestration
-│       └── app.py             # GET /documents /search · POST /ask
-└── tests/
-    ├── ...                    # unit tests (faked deps, no Docker)
-    └── integration/           # testcontainers: real Kafka/Postgres/Qdrant
+│   ├── common/           # event contract: envelopes, topics, config,
+│   │                     # retry/DLQ policy, health, metrics
+│   ├── db/               # models, transactional outbox, idempotency guard
+│   ├── storage/          # pluggable object storage (local | S3/MinIO)
+│   ├── gateway/          # write API + outbox relay
+│   ├── extraction/       # ingested  → extracted
+│   ├── enrichment/       # extracted → Qdrant + LLM → enriched
+│   ├── projection/       # enriched  → CQRS read model
+│   └── query/            # read API: retrieval, prompts, generation
+├── deploy/
+│   ├── helm/docstream/   # chart: services, HPA, bootstrap jobs, observability
+│   └── kind/             # local cluster config
+├── alembic/              # database migrations
+├── tests/                # unit + Docker-backed integration suites
+├── .github/workflows/    # CI and image publishing
+├── Dockerfile            # multi-stage, one image per service
+└── docker-compose*.yml   # local infrastructure and app overlay
 ```
 
-## Roadmap
-
-- **Week 1** — skeleton, event backbone, API Gateway + outbox, extraction worker (done).
-- **Week 2** — enrichment worker (Qdrant + LLM), idempotent consumers, retry + DLQ,
-  plus CQRS read side (projector + Query API with RAG) and a Docker-backed
-  integration suite (done).
-- **Week 3** — Docker images, Kubernetes + Helm, GitHub Actions, Prometheus + Grafana.
-- **Week 4** — OpenTelemetry tracing, k6 load test, polish.
+Run `make help` to see every target.
