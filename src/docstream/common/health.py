@@ -41,13 +41,34 @@ _NOT_FOUND = (
 _HEALTH_PATHS = {"/healthz", "/readyz", "/health", "/"}
 
 
+def _metrics_response() -> bytes:
+    """Serve the Prometheus exposition format on the same port as the probes.
+
+    Workers have no web framework, and running a second server for metrics would
+    mean a second port to wire through the chart for no benefit.
+    """
+    from docstream.common import metrics
+
+    body, content_type = metrics.render()
+    head = (
+        f"HTTP/1.1 200 OK\r\n"
+        f"Content-Type: {content_type}\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        f"Connection: close\r\n\r\n"
+    ).encode("latin-1")
+    return head + body
+
+
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         # Only the request line matters; we never read a body.
         line = await asyncio.wait_for(reader.readline(), timeout=5)
         parts = line.decode("latin-1").split()
         path = parts[1] if len(parts) > 1 else "/"
-        writer.write(_RESPONSE if path in _HEALTH_PATHS else _NOT_FOUND)
+        if path == "/metrics":
+            writer.write(_metrics_response())
+        else:
+            writer.write(_RESPONSE if path in _HEALTH_PATHS else _NOT_FOUND)
         await writer.drain()
     except (TimeoutError, ConnectionError):
         pass  # probe hung up or timed out; nothing useful to do

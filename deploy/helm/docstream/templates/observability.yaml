@@ -1,0 +1,260 @@
+{{- /*
+Prometheus + Grafana for the bundled dev stack.
+
+Scraping uses Prometheus' own Kubernetes service discovery keyed on pod
+annotations (prometheus.io/scrape), NOT ServiceMonitor CRDs — so this works on a
+bare kind cluster with no Prometheus Operator installed. In a real cluster you'd
+disable this (observability.enabled=false) and let an existing
+kube-prometheus-stack discover the same annotated pods.
+
+Storage is emptyDir on purpose: dashboards and a few hours of samples are enough
+to demo, and it keeps the chart free of another PVC.
+*/}}
+{{- if .Values.observability.enabled }}
+{{- $fullname := include "docstream.fullname" . -}}
+
+# --------------------------------------------------------------------------- #
+# RBAC: Prometheus needs to list pods to discover scrape targets.
+# --------------------------------------------------------------------------- #
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-prometheus
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-prometheus
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, endpoints, nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-prometheus
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-prometheus
+    namespace: {{ .Release.Namespace }}
+
+# --------------------------------------------------------------------------- #
+# Prometheus
+# --------------------------------------------------------------------------- #
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-prometheus-config
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # Discover any pod carrying prometheus.io/scrape: "true". The DocStream
+      # pods set it below; nothing else needs configuring when a service is
+      # added or scaled.
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          # Honour a per-pod port/path override.
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # Turn Kubernetes labels into useful Prometheus labels so dashboards
+          # can group by service.
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            action: replace
+            target_label: component
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-prometheus
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "prometheus") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.podLabels" (dict "ctx" . "component" "prometheus") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $fullname }}-prometheus
+      containers:
+        - name: prometheus
+          image: {{ .Values.observability.prometheus.image }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time={{ .Values.observability.prometheus.retention }}
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet: { path: /-/ready, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-prometheus-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-prometheus
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+  selector:
+    {{- include "docstream.selectorLabels" (dict "ctx" . "component" "prometheus") | nindent 4 }}
+
+# --------------------------------------------------------------------------- #
+# Grafana — datasource and dashboard provisioned from ConfigMaps, so the
+# dashboard is in git rather than clicked together and lost on restart.
+# --------------------------------------------------------------------------- #
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-grafana-provisioning
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ $fullname }}-prometheus:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: docstream
+        orgId: 1
+        folder: DocStream
+        type: file
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-grafana
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "grafana") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.podLabels" (dict "ctx" . "component" "grafana") | nindent 8 }}
+      annotations:
+        checksum/dashboard: {{ include (print $.Template.BasePath "/dashboard.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: grafana
+          image: {{ .Values.observability.grafana.image }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: {{ .Values.observability.grafana.adminUser | quote }}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: {{ .Values.observability.grafana.adminPassword | quote }}
+            # Local demo only: skips the login screen entirely.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: {{ .Values.observability.grafana.anonymous | quote }}
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Admin
+          volumeMounts:
+            - name: provisioning-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: provisioning-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: provisioning-datasources
+          configMap:
+            name: {{ $fullname }}-grafana-provisioning
+            items: [{ key: datasource.yaml, path: datasource.yaml }]
+        - name: provisioning-dashboards
+          configMap:
+            name: {{ $fullname }}-grafana-provisioning
+            items: [{ key: dashboards.yaml, path: dashboards.yaml }]
+        - name: dashboards
+          configMap:
+            name: {{ $fullname }}-grafana-dashboard
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-grafana
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+  selector:
+    {{- include "docstream.selectorLabels" (dict "ctx" . "component" "grafana") | nindent 4 }}
+{{- end }}

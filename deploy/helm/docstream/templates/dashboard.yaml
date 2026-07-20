@@ -1,0 +1,227 @@
+{{- if .Values.observability.enabled }}
+{{- /*
+Dashboard as code: a ConfigMap in git rather than panels clicked together in the
+Grafana UI, so it survives restarts and is reviewable in a PR.
+
+Organised around the questions this architecture actually raises:
+
+  Row 1  CQRS lag        — how stale is the read model? (kafka-exporter)
+  Row 2  AI latency/cost — where do the seconds go? (embedding vs LLM vs Qdrant)
+  Row 3  Retrieval       — are the answers grounded in anything relevant?
+  Row 4  Patterns        — proof the outbox/idempotency/DLQ machinery works
+  Row 5  Orchestration   — restarts and HPA behaviour (kube-state-metrics)
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "docstream.fullname" . }}-grafana-dashboard
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+data:
+  docstream.json: |
+    {
+      "title": "DocStream Pipeline",
+      "uid": "docstream-pipeline",
+      "timezone": "browser",
+      "refresh": "10s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "type": "row", "title": "CQRS write-path lag",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Kafka consumer group lag",
+          "description": "Messages each consumer group is behind. This IS the staleness of the CQRS read model. Sustained growth means a worker cannot keep up; a flat non-zero line during idle means a wedged consumer.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+          "targets": [
+            {
+              "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag)",
+              "legendFormat": "{{`{{consumergroup}}`}} / {{`{{topic}}`}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Pipeline throughput by stage",
+          "description": "Successful events/sec. Stages should track each other; a diverging stage is the bottleneck.",
+          "gridPos": { "h": 8, "w": 8, "x": 12, "y": 1 },
+          "targets": [
+            {
+              "expr": "sum by (stage) (rate(docstream_events_processed_total{result=\"success\"}[5m]))",
+              "legendFormat": "{{`{{stage}}`}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Outbox backlog",
+          "description": "Unpublished outbox rows. Growth means the relay is behind.",
+          "gridPos": { "h": 8, "w": 4, "x": 20, "y": 1 },
+          "targets": [{ "expr": "max(docstream_outbox_pending)" }]
+        },
+
+        {
+          "type": "row", "title": "AI call latency and cost drivers",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+        },
+        {
+          "type": "timeseries",
+          "title": "External call latency p95 by provider/operation",
+          "description": "Splits enrichment into embedding vs LLM vs vector store. p99 is shown separately because at low volume it is a single sample.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, provider, operation) (rate(docstream_external_call_seconds_bucket[5m])))",
+              "legendFormat": "{{`{{provider}}`}}/{{`{{operation}}`}} p95"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+        {
+          "type": "timeseries",
+          "title": "External call latency p99",
+          "description": "Needs sustained load to be meaningful — run the k6 test before reading this.",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 10 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum by (le, provider, operation) (rate(docstream_external_call_seconds_bucket[5m])))",
+              "legendFormat": "{{`{{provider}}`}}/{{`{{operation}}`}} p99"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+        {
+          "type": "timeseries",
+          "title": "External call error rate",
+          "description": "Provider errors explain retry and DLQ traffic upstream.",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 10 },
+          "targets": [
+            {
+              "expr": "sum by (provider, operation) (rate(docstream_external_calls_total{result=\"error\"}[5m]))",
+              "legendFormat": "{{`{{provider}}`}}/{{`{{operation}}`}}"
+            }
+          ]
+        },
+
+        {
+          "type": "row", "title": "Retrieval quality",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }
+        },
+        {
+          "type": "heatmap",
+          "title": "Top-hit similarity score distribution",
+          "description": "Cosine score of the best match per query, recorded BEFORE the relevance cutoff. Drift toward zero means the corpus no longer answers what people ask. This replaces a cache-style hit/miss rate, which does not apply: vector search always returns k neighbours.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+          "targets": [
+            {
+              "expr": "sum by (le) (rate(docstream_retrieval_top_score_bucket[5m]))",
+              "format": "heatmap",
+              "legendFormat": "{{`{{le}}`}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Queries answered vs declined",
+          "description": "'empty' means nothing cleared the relevance cutoff, so the model declined instead of citing noise. A rising empty rate is a corpus/threshold problem, not a bug.",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 19 },
+          "targets": [
+            {
+              "expr": "sum by (kind, result) (rate(docstream_queries_total[5m]))",
+              "legendFormat": "{{`{{kind}}`}} {{`{{result}}`}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Chunks returned per query (p50/p95)",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 19 },
+          "targets": [
+            { "expr": "histogram_quantile(0.5, sum by (le) (rate(docstream_retrieval_chunks_returned_bucket[5m])))", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, sum by (le) (rate(docstream_retrieval_chunks_returned_bucket[5m])))", "legendFormat": "p95" }
+          ]
+        },
+
+        {
+          "type": "row", "title": "Distributed-systems patterns (proof they work)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Retries and dead-letters / sec",
+          "description": "Retries are the system absorbing transient failure. DLQ traffic means events gave up after max_attempts and are parked for inspection.",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 28 },
+          "targets": [
+            { "expr": "sum by (stage) (rate(docstream_retries_total[5m]))", "legendFormat": "retry {{`{{stage}}`}}" },
+            { "expr": "sum by (stage) (rate(docstream_dlq_total[5m]))", "legendFormat": "DLQ {{`{{stage}}`}}" }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Duplicate events deduped",
+          "description": "The idempotency guard firing. Non-zero proves at-least-once redelivery is being absorbed without double-processing.",
+          "gridPos": { "h": 7, "w": 4, "x": 8, "y": 28 },
+          "targets": [{ "expr": "sum(docstream_events_processed_total{result=\"duplicate\"})" }]
+        },
+        {
+          "type": "stat",
+          "title": "Dead-lettered (total)",
+          "gridPos": { "h": 7, "w": 4, "x": 12, "y": 28 },
+          "targets": [{ "expr": "sum(docstream_dlq_total)" }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Stage latency p95",
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 28 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(docstream_event_processing_seconds_bucket[5m])))",
+              "legendFormat": "{{`{{stage}}`}} p95"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+
+        {
+          "type": "row", "title": "Kubernetes orchestration",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Pod restarts",
+          "description": "Zero is the healthy state. This is the signal that distinguishes a clean rollout from pods crash-looping until dependencies happen to be ready.",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 36 },
+          "targets": [
+            {
+              "expr": "sum by (pod) (kube_pod_container_status_restarts_total{pod=~\"docstream-.*\"})",
+              "legendFormat": "{{`{{pod}}`}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "HPA replicas: current vs desired",
+          "description": "The query service scales independently of ingest — the concrete payoff of the CQRS split.",
+          "gridPos": { "h": 7, "w": 8, "x": 8, "y": 36 },
+          "targets": [
+            { "expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=~\"docstream.*\"}", "legendFormat": "current" },
+            { "expr": "kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler=~\"docstream.*\"}", "legendFormat": "desired" },
+            { "expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~\"docstream.*\"}", "legendFormat": "max" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Deployment replicas ready",
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 36 },
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_ready{deployment=~\"docstream-.*\"}",
+              "legendFormat": "{{`{{deployment}}`}}"
+            }
+          ]
+        }
+      ]
+    }
+{{- end }}

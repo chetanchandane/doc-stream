@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol, runtime_checkable
 
+from docstream.common import metrics
 from docstream.query.prompts import SYSTEM_PROMPT, build_user_message
 
 log = logging.getLogger("docstream.query.generation")
@@ -43,12 +44,15 @@ class AnthropicGenerator:
         self.max_tokens = max_tokens
 
     async def generate(self, question: str, contexts: list[dict]) -> str:
-        message = await self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_user_message(question, contexts)}],
-        )
+        with metrics.timed_call("anthropic", "generate"):
+            message = await self._client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=SYSTEM_PROMPT,
+                messages=[
+                    {"role": "user", "content": build_user_message(question, contexts)}
+                ],
+            )
         return message.content[0].text
 
 

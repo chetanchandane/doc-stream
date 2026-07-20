@@ -36,11 +36,15 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "docstream.selectorLabels" (dict "ctx" $ "component" $w.name) | nindent 8 }}
+        {{- include "docstream.podLabels" (dict "ctx" $ "component" $w.name) | nindent 8 }}
       annotations:
         # Roll the pods when config changes, so a ConfigMap edit actually takes
         # effect instead of silently waiting for the next unrelated deploy.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        # Workers serve /metrics on the same port as the health probes.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ $w.cfg.healthPort | quote }}
+        prometheus.io/path: "/metrics"
     spec:
       {{- include "docstream.waitForInfra" $ | nindent 6 }}
       containers:

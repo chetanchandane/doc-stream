@@ -28,6 +28,22 @@ app.kubernetes.io/instance: {{ .ctx.Release.Name }}
 app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
+{{/*
+Pod-template labels: the selector labels PLUS part-of.
+
+Kept separate from selectorLabels on purpose. A Deployment's spec.selector is
+IMMUTABLE, so adding a label there would break `helm upgrade` on an existing
+release. Pod templates may carry extra labels beyond the selector, which is
+where part-of belongs — it's what `kubectl logs -l app.kubernetes.io/part-of`
+and the CI restart-count assertion select on.
+
+Call with (dict "ctx" . "component" "gateway").
+*/}}
+{{- define "docstream.podLabels" -}}
+{{ include "docstream.selectorLabels" . }}
+app.kubernetes.io/part-of: docstream
+{{- end -}}
+
 {{- define "docstream.secretName" -}}
 {{- if .Values.secrets.existingSecret -}}
 {{- .Values.secrets.existingSecret -}}

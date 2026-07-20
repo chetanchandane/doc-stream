@@ -19,7 +19,9 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from docstream.common import metrics
 from docstream.common.config import get_settings
+from docstream.common.http_metrics import instrument
 from docstream.db.base import get_session
 from docstream.db.models import Job
 from docstream.gateway.schemas import IngestResponse, JobResponse
@@ -46,6 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="DocStream API Gateway", version="0.1.0", lifespan=lifespan)
+instrument(app, service="gateway")
 
 
 @app.get("/healthz")
@@ -80,6 +83,7 @@ async def ingest_document(
             size_bytes=len(data),
             storage_uri=storage_uri,
         )
+    metrics.documents_ingested_total.inc()
     return IngestResponse(
         job_id=job.id, document_id=job.document_id, status=job.status
     )

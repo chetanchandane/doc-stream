@@ -18,6 +18,8 @@ import logging
 import struct
 from typing import Protocol, runtime_checkable
 
+from docstream.common import metrics
+
 logger = logging.getLogger(__name__)
 
 # ClinRAG's Tier-1 OpenAI defaults: 40k TPM for text-embedding-3-small.
@@ -64,11 +66,13 @@ class OpenAIEmbedder:
         for start in range(0, len(texts), _EMBED_BATCH_SIZE):
             batch = texts[start : start + _EMBED_BATCH_SIZE]
             try:
-                resp = await self._client.embeddings.create(model=self.model, input=batch)
+                with metrics.timed_call("openai", "embed"):
+                    resp = await self._client.embeddings.create(model=self.model, input=batch)
             except RateLimitError:
                 logger.warning("Embedding rate limit hit; cooling down %ss", _RATE_LIMIT_COOLDOWN)
                 await asyncio.sleep(_RATE_LIMIT_COOLDOWN)
-                resp = await self._client.embeddings.create(model=self.model, input=batch)
+                with metrics.timed_call("openai", "embed"):
+                    resp = await self._client.embeddings.create(model=self.model, input=batch)
 
             vectors.extend(item.embedding for item in resp.data)
 

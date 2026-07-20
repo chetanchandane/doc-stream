@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from docstream.common import metrics
 from docstream.enrichment.embedding import Embedder
 from docstream.enrichment.qdrant_store import search
 
@@ -83,10 +84,18 @@ async def retrieve(
     if document_id is not None:
         hits = [h for h in hits if h.get("document_id") == document_id]
 
+    # Record the BEST raw score before filtering: it is the retrieval-quality
+    # signal. Post-filter it would be censored (everything weak is gone), which
+    # would hide exactly the degradation we want to see.
+    if hits:
+        metrics.retrieval_top_score.observe(hits[0].get("score") or 0.0)
+
     hits = filter_by_relevance(
         hits, min_score=min_score, relative_cutoff=relative_cutoff
     )
     if not hits:
         log.info("no chunks cleared the relevance cutoff for query %r", question)
 
-    return hits[:limit]
+    kept = hits[:limit]
+    metrics.retrieval_chunks_returned.observe(len(kept))
+    return kept

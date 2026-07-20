@@ -22,9 +22,12 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "docstream.selectorLabels" (dict "ctx" . "component" "query") | nindent 8 }}
+        {{- include "docstream.podLabels" (dict "ctx" . "component" "query") | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ $cfg.port | quote }}
+        prometheus.io/path: "/metrics"
     spec:
       {{- include "docstream.waitForInfra" . | nindent 6 }}
       containers:

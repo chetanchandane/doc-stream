@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: ci help install up down build up-all down-all logs logs-app topics ps ps-all test test-integration test-all lint fmt clean gateway worker enrichment projector query kind-up kind-down kind-load helm-lint helm-template helm-install helm-uninstall k8s-status k8s-forward k8s-logs
+.PHONY: ci help install up down build up-all down-all logs logs-app topics ps ps-all test test-integration test-all lint fmt clean gateway worker enrichment projector query kind-up kind-down kind-load helm-lint helm-template helm-install helm-uninstall k8s-status k8s-forward k8s-observability k8s-logs
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -99,6 +99,12 @@ k8s-forward: ## Port-forward both APIs (gateway :8000, query :8001)
 	@echo "gateway -> http://localhost:8000 ; query -> http://localhost:8001 (Ctrl-C to stop)"
 	kubectl port-forward svc/docstream-gateway 8000:8000 & \
 	kubectl port-forward svc/docstream-query 8001:8001 & \
+	wait
+
+k8s-observability: ## Port-forward Grafana (:3000) and Prometheus (:9090)
+	@echo "grafana -> http://localhost:3000 ; prometheus -> http://localhost:9090 (Ctrl-C to stop)"
+	kubectl port-forward svc/docstream-grafana 3000:3000 & \
+	kubectl port-forward svc/docstream-prometheus 9090:9090 & \
 	wait
 
 k8s-logs: ## Tail logs from every app pod

@@ -26,6 +26,8 @@ import uuid
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
+from docstream.common import metrics
+
 # Fixed namespace so the derived UUIDs are stable across processes and runs.
 _POINT_NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00c04fc964ff")
 
@@ -90,10 +92,11 @@ async def upsert_chunks(
     ]
 
     for start in range(0, len(points), batch_size):
-        await client.upsert(
-            collection_name=collection,
-            points=points[start : start + batch_size],
-        )
+        with metrics.timed_call("qdrant", "upsert"):
+            await client.upsert(
+                collection_name=collection,
+                points=points[start : start + batch_size],
+            )
 
     return ids
 
@@ -112,12 +115,13 @@ async def search(
     ``client.search(query_vector=...)`` was deprecated and REMOVED in current
     qdrant-client versions, so calling it raises AttributeError.
     """
-    response = await client.query_points(
-        collection_name=collection,
-        query=query_vector,
-        limit=limit,
-        with_payload=True,
-    )
+    with metrics.timed_call("qdrant", "search"):
+        response = await client.query_points(
+            collection_name=collection,
+            query=query_vector,
+            limit=limit,
+            with_payload=True,
+        )
     results: list[dict] = []
     for hit in response.points:
         payload = hit.payload or {}

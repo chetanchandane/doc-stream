@@ -122,6 +122,43 @@ jobs:
     enabled: true
     backoffLimit: 3
 
+# ---------------------------------------------------------------------------
+# Observability. Prometheus scrapes pods by annotation (no Operator/CRDs
+# required), Grafana is provisioned with a datasource and the dashboard from
+# templates/dashboard.yaml.
+#
+# In a cluster that already runs kube-prometheus-stack, set enabled=false — the
+# pods keep their prometheus.io/scrape annotations, so an existing Prometheus
+# discovers them without any change here.
+# ---------------------------------------------------------------------------
+observability:
+  enabled: true
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    retention: 6h
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    adminUser: admin
+    adminPassword: admin
+    # Local demo convenience: skip the login screen. Never do this in a cluster
+    # reachable by anyone else.
+    anonymous: true
+
+  # Consumer group lag. Deliberately external rather than self-reported: a
+  # wedged consumer stops updating its own metrics precisely when lag matters.
+  # Only useful with the bundled Kafka; point it at your broker otherwise.
+  kafkaExporter:
+    enabled: true
+    image: danielqsj/kafka-exporter:v1.7.0
+
+  # Pod restarts, HPA state, replica counts — cluster facts the app can't report.
+  # Disable if your cluster already runs kube-state-metrics.
+  kubeStateMetrics:
+    enabled: true
+    image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+
 ingress:
   enabled: false
   className: nginx

@@ -17,6 +17,7 @@ from __future__ import annotations
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from docstream.common import metrics
 from docstream.db.models import ProcessedEvent
 
 
@@ -38,4 +39,9 @@ async def mark_processed(
         return True
     except IntegrityError:
         # Unique (event_id, consumer_group) violated -> already processed.
+        # Counted here because this is the single place dedup is decided, so
+        # every worker gets the metric for free.
+        metrics.events_processed_total.labels(
+            stage=consumer_group, result="duplicate"
+        ).inc()
         return False

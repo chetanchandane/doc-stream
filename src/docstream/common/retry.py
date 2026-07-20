@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from docstream.common import metrics
 from docstream.common.events import EventEnvelope
 from docstream.common.topics import dlq_topic
 
@@ -58,13 +60,26 @@ async def process_with_retry(
     delivery counts as attempt 0). The caller commits the Kafka offset after this
     returns, regardless of outcome — the retry lives on as a new message.
     """
+    # Every worker funnels through here, so instrumenting once covers all three.
+    # Timing wraps only the handler, not the retry/DLQ publishing that follows,
+    # so the histogram measures work rather than error handling.
+    started = time.perf_counter()
     try:
         await work()
+        metrics.event_processing_seconds.labels(stage=source_topic).observe(
+            time.perf_counter() - started
+        )
+        metrics.events_processed_total.labels(stage=source_topic, result="success").inc()
         return
     except Exception as exc:  # noqa: BLE001 - policy decision, not silent swallow
+        metrics.event_processing_seconds.labels(stage=source_topic).observe(
+            time.perf_counter() - started
+        )
+        metrics.events_processed_total.labels(stage=source_topic, result="failed").inc()
         next_attempt = envelope.attempt + 1
 
         if next_attempt >= max_attempts:
+            metrics.dlq_total.labels(stage=source_topic).inc()
             dlq = dlq_topic(source_topic)
             await producer.publish(dlq, envelope.to_bytes(), envelope.key())
             log.error(
@@ -77,6 +92,8 @@ async def process_with_retry(
             if on_dlq is not None:
                 await on_dlq(exc)
             return
+
+        metrics.retries_total.labels(stage=source_topic).inc()
 
         if backoff_seconds:
             await asyncio.sleep(backoff_seconds * next_attempt)

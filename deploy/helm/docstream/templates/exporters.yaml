@@ -1,0 +1,132 @@
+{{- /*
+Exporters for the two things the application cannot report about itself.
+
+kafka-exporter — consumer group lag.
+  Lag is THE metric for an event-driven system: it measures how far the read
+  model trails the write path. It is deliberately NOT self-reported from inside
+  the consumer loop, because a wedged consumer stops updating its own gauge
+  exactly when lag matters most. An external exporter keeps reporting rising lag
+  for a dead consumer.
+
+kube-state-metrics — pod restarts, HPA state, deployment replicas.
+  These are cluster facts, not application facts. Restart count in particular is
+  what distinguishes "converged cleanly" from "crash-looped until it stuck".
+*/}}
+{{- if .Values.observability.enabled }}
+{{- $fullname := include "docstream.fullname" . -}}
+
+{{- if and .Values.observability.kafkaExporter.enabled .Values.infra.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-kafka-exporter
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "kafka-exporter") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.podLabels" (dict "ctx" . "component" "kafka-exporter") | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9308"
+        prometheus.io/path: "/metrics"
+    spec:
+      {{- include "docstream.waitForKafka" . | nindent 6 }}
+      containers:
+        - name: kafka-exporter
+          image: {{ .Values.observability.kafkaExporter.image }}
+          args:
+            - --kafka.server={{ $fullname }}-kafka:9092
+          ports:
+            - name: metrics
+              containerPort: 9308
+          readinessProbe:
+            httpGet: { path: /metrics, port: metrics }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+{{- end }}
+
+{{- if .Values.observability.kubeStateMetrics.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-kube-state-metrics
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-kube-state-metrics
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, services, endpoints, namespaces, replicationcontrollers, resourcequotas]
+    verbs: [list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-kube-state-metrics
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-kube-state-metrics
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-kube-state-metrics
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-kube-state-metrics
+  labels:
+    {{- include "docstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kube-state-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docstream.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docstream.podLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: {{ $fullname }}-kube-state-metrics
+      containers:
+        - name: kube-state-metrics
+          image: {{ .Values.observability.kubeStateMetrics.image }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+{{- end }}
+{{- end }}

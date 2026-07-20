@@ -20,6 +20,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from docstream.common import metrics
 from docstream.common.config import get_settings
 from docstream.db.base import get_sessionmaker
 from docstream.db.outbox import fetch_unpublished, mark_published
@@ -41,6 +42,10 @@ async def drain_once(
     at-least-once trade-off.
     """
     rows = await fetch_unpublished(session, batch_size)
+    # Backlog depth. Only exact when the batch isn't full; a reading pinned at
+    # batch_size means "at least this many", which is itself the signal that the
+    # relay is falling behind.
+    metrics.outbox_pending.set(len(rows))
     if not rows:
         return 0
     for row in rows:

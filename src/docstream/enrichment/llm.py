@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
+from docstream.common import metrics
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,12 +94,13 @@ class AnthropicLLM:
         self.max_tokens = max_tokens
 
     async def enrich(self, text: str) -> EnrichmentResult:
-        message = await self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=ENRICHMENT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": _build_user_message(text)}],
-        )
+        with metrics.timed_call("anthropic", "enrich"):
+            message = await self._client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=ENRICHMENT_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": _build_user_message(text)}],
+            )
         return _parse(message.content[0].text)
 
 

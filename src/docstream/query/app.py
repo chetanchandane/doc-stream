@@ -25,7 +25,9 @@ from functools import lru_cache
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from docstream.common import metrics
 from docstream.common.config import get_settings
+from docstream.common.http_metrics import instrument
 from docstream.db.base import get_session
 from docstream.query import service
 from docstream.query.schemas import (
@@ -78,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="DocStream Query API", version="0.1.0", lifespan=lifespan)
+instrument(app, service="query")
 
 
 @app.get("/healthz")
@@ -130,6 +133,9 @@ async def search(
         min_score=settings.query.min_score,
         relative_cutoff=settings.query.relative_cutoff,
     )
+    metrics.queries_total.labels(
+        kind="search", result="hit" if hits else "empty"
+    ).inc()
     return SearchResponse(query=q, count=len(hits), results=[Chunk(**h) for h in hits])
 
 
@@ -152,6 +158,11 @@ async def ask(
         min_score=settings.query.min_score,
         relative_cutoff=settings.query.relative_cutoff,
     )
+    # "empty" means nothing cleared the relevance cutoff, so the model declined
+    # rather than citing noise — worth watching as a retrieval-quality signal.
+    metrics.queries_total.labels(
+        kind="ask", result="hit" if sources else "empty"
+    ).inc()
     return AskResponse(
         question=request.question,
         answer=answer,
